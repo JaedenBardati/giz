@@ -47,6 +47,7 @@
 #
 # TODO:
 #    1) Auto add some parameters like fftw2/fftw3
+#    2) Add installation of mpi, gsl, fftw, hdf5, etc. (if needed)
 
 
 set -e  # exit immediately on error
@@ -67,7 +68,7 @@ THREADS_PER_PROCESS=1       # set with -T flag (aka number of cpu threads per MP
 NNODES=0                    # set with -N flag (0 = no slurm queue, 1+ = 1+ slurm node(s))
 NPROCESSES=1                # set with -n flag (aka number of MPI tasks/processes, irrelevant if NNODES!=0)
 JOB_TIME="2-00:00:00"       # set with -t flag (D-HH:MM:SS, irrelevant if NNODES!=0)
-JOB_NAME="gizmo_job"        # set with -j flag (irrelevant if NNODES!=0)
+JOB_NAME="gizmo"        # set with -j flag (irrelevant if NNODES!=0)
 JOB_NAME_SET=false          # flags if -j was set
 
 # override with predefined variables if needed (e.g. export variabled in your .bashrc or .bash_profile)
@@ -166,30 +167,32 @@ done
 # ----------------------------
 
 # move to run directory
+ORIGINAL_DIR=${PWD}
 mkdir -p $RUN_DIR
 cd "$RUN_DIR" || error "failed to enter run directory: $RUN_DIR"
-info "run directory set to $RUN_DIR"
+info "using ${RUN_DIR} as run directory"
 
 # set job name if not set using directory name
 if [[ "$JOB_NAME_SET" == "false" && "$NNODES" -gt 0 ]]; then
     JOB_NAME="gizmo_${PWD##*/}"
-    echo "setting default job name to '${JOB_NAME}'" 
+    info "no job name set, using '${JOB_NAME}'" 
 fi
 
-# source bashrc or bash_profile if exists
-if [[ -f "${HOME}/.bashrc"]]; then
+# source bashrc or bash_profile if they exist
+if [[ -f "${HOME}/.bashrc" ]]; then
     source "${HOME}/.bashrc"
-elif [[ -f "${HOME}/.bash_profile"]]; then
+fi
+if [[ -f "${HOME}/.bash_profile" ]]; then
     source "${HOME}/.bash_profile"
 fi
 
 # try to load modules
 if command -v module >/dev/null 2>&1; then
-    echo "modules system available, loading in relevant modules..."
+    info "modules system available, loading in relevant modules..."
     module purge
     module load ${MODULE_LIST}
 else
-    echo "no modules system found, assuming you have already installed relevant packages."
+    info "no modules system found, assuming you have already installed relevant packages."
 fi
 
 # set open mp threads 
@@ -209,11 +212,10 @@ if [[ ! -d "$CODE_DIR" ]]; then
         info "copying from \$GIZMO_SOURCE=$GIZMO_SOURCE"
         cp -r "$GIZMO_SOURCE" "$CODE_DIR"
     else
-        info "no local GIZMO source found."
         if [[ "$SKIP_MAKE" == true ]]; then
-            error "since there is no source code directory and no compilation, there will not be any executable to run!"
+            error "there is no source code directory and compilation is turned off so there is no executable to run!"
         fi 
-        echo
+        info "no local GIZMO source found, opting to clone repo instead..."
         # clone repo
         read -p "do you want to clone the private GIZMO repository instead of the public one? [y/n]: " REPLY
         REPLY=${REPLY,,}  #lowercase
@@ -223,25 +225,25 @@ if [[ ! -d "$CODE_DIR" ]]; then
         else
             info "cloning public GIZMO repository (bitbucket)..."
             if git clone https://bitbucket.org/phopkins/gizmo-public.git "$CODE_DIR"; then
-                info "successfully cloned from bitbucket."
+                info "successfully cloned GIZMO from bitbucket."
             else
                 warn "bitbucket clone failed, falling back to github ..."
                 if git clone https://github.com/pfhopkins/gizmo-public.git "$CODE_DIR"; then
-                    info "successfully cloned from github."
+                    info "successfully cloned GIZMO from github."
                 else
                     error "failed to clone from both bitbucket and github."
                 fi
             fi
         fi
         # set system type
-        if [[ "$GIZMO_SYSTYPE" == ""]]; then
+        if [[ "$GIZMO_SYSTYPE" == "" ]]; then
             error "GIZMO_SYSTYPE is not set. Please run \"export GIZMO_SYSTYPE= \" prior to or in your .bashrc or .bash_profile file."
         fi
-        echo "setting system type to ${GIZMO_SYSTYPE}"
-        echo -e "\nSYSTYPE=\"${GIZMO_SYSTYPE}\"" >> Makefile.systype
+        echo -e "\nSYSTYPE=\"${GIZMO_SYSTYPE}\"" >> "${CODE_DIR}/Makefile.systype"
+        info "set system type to ${GIZMO_SYSTYPE} in ${CODE_DIR}/Makefile.systype"
     fi
 else
-    info "Found existing code directory."
+    info "found existing code directory."
 fi
 
 
@@ -249,21 +251,19 @@ fi
 # Step 2: Prepare config file (if not skipped)
 # ----------------------------
 if [[ "$SKIP_MAKE" == false ]]; then
-    cd "$CODE_DIR"
-
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        if [[ -f "${TEMPLATE_CONFIG_FILE}" ]]; then
-            echo "making new config file $CONFIG_FILE from ${TEMPLATE_CONFIG_FILE} ..."
-            cp ${CODE_DIR}/${TEMPLATE_CONFIG_FILE} ./Config.sh
+    if [[ ! -f "${CODE_DIR}/$CONFIG_FILE" ]]; then
+        if [[ -f "${CODE_DIR}/${TEMPLATE_CONFIG_FILE}" ]]; then
+            info "making new config file ${CONFIG_FILE} based on ${CODE_DIR}/${TEMPLATE_CONFIG_FILE} ..."
+            cp "${CODE_DIR}/${TEMPLATE_CONFIG_FILE}" "${RUN_DIR}/Config.sh"
         else
-            warn "no ${TEMPLATE_CONFIG_FILE} template found in code directory, making blank $CONFIG_FILE ..."
-            touch "$CONFIG_FILE"
+            warn "no ${TEMPLATE_CONFIG_FILE} template found in code directory \"${CODE_DIR}\", making blank $CONFIG_FILE ..."
+            touch "${CODE_DIR}/$CONFIG_FILE"
         fi
     else
-        echo "opening existing config file $CONFIG_FILE ..."
+        info "opening existing config file ${CODE_DIR}/${CONFIG_FILE} ..."
     fi
 
-    $EDITOR "$CONFIG_FILE"
+    $EDITOR "${CODE_DIR}/$CONFIG_FILE"
 fi
 
 
@@ -271,9 +271,11 @@ fi
 # Step 3: Compile (if not skipped)
 # ----------------------------
 if [[ "$SKIP_MAKE" == false ]]; then
+    cd "$CODE_DIR"
+    
     # compile
     info "compiling ${EXEC_FILE} ..."
-    make -j$(nproc) CONFIG_FILE="$CONFIG_FILE" EXECUTABLE="$EXEC_FILE" || error "compilation failed."
+    make -j$(nproc) CONFIG="$CONFIG_FILE" EXEC="$EXEC_FILE" || error "compilation failed."
     info "compilation successful."
 
     cd "$RUN_DIR"
@@ -294,7 +296,7 @@ if [[ ! -f "$PARAM_FILE" ]]; then
         touch "$PARAM_FILE"
     fi
 else
-    info "Found existing $PARAM_FILE"
+    info "found existing $PARAM_FILE"
 fi
 
 $EDITOR "$PARAM_FILE"
@@ -312,7 +314,7 @@ fi
 if command -v ibrun >/dev/null 2>&1; then
     info "using ibrun for mpi launch"
     LAUNCHER="ibrun"
-    LAUNCH_ARGS=""
+    LAUNCH_ARGS="-n ${NPROCESSES}"
 elif command -v aprun >/dev/null 2>&1; then
     info "using aprun for mpi launch"
     LAUNCHER="aprun"
@@ -333,7 +335,7 @@ fi
 if [[ "$NNODES" -gt 0 ]]; then
     info "making slurm batch script..."
     
-    BATCH_FILE="${JOB_NAME}.slurm"
+    BATCH_FILE="submit_${JOB_NAME}.sh"
     cat > "$BATCH_FILE" <<EOF
 #!/bin/bash
 #SBATCH --job-name=${JOB_NAME}
@@ -347,17 +349,18 @@ source "${HOME}/.bashrc"
 module purge
 module load ${MODULE_LIST}
 
-$LAUNCHER $LAUNCH_ARGS "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>gizmo.out 2>gizmo.err
 echo "$LAUNCHER $LAUNCH_ARGS $EXEC_PATH $PARAM_FILE $RESTART"
+$LAUNCHER $LAUNCH_ARGS "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>${JOB_NAME}.out 2>${JOB_NAME}.err
 echo done
 EOF
     info "submitting slurm batch script..."
-    sbatch "$BATCH_FILE"
+    cd ${ORIGINAL_DIR}
+    sbatch "${RUN_DIR}/${BATCH_FILE}"
 else
     # actually run locally
     info "running GIZMO..."
-    $LAUNCHER $LAUNCH_ARGS "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>gizmo.out 2>gizmo.err
     echo "$LAUNCHER $LAUNCH_ARGS $EXEC_PATH $PARAM_FILE $RESTART"
+    $LAUNCHER $LAUNCH_ARGS "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>${JOB_NAME}.out 2>${JOB_NAME}.err
 fi
 
 info "done"
