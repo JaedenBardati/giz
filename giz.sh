@@ -166,6 +166,7 @@ done
 # ----------------------------
 
 # move to run directory
+ORIGINAL_DIR=${PWD}
 mkdir -p $RUN_DIR
 cd "$RUN_DIR" || error "failed to enter run directory: $RUN_DIR"
 info "run directory set to $RUN_DIR"
@@ -176,10 +177,11 @@ if [[ "$JOB_NAME_SET" == "false" && "$NNODES" -gt 0 ]]; then
     echo "setting default job name to '${JOB_NAME}'" 
 fi
 
-# source bashrc or bash_profile if exists
+# source bashrc or bash_profile if they exist
 if [[ -f "${HOME}/.bashrc"]]; then
     source "${HOME}/.bashrc"
-elif [[ -f "${HOME}/.bash_profile"]]; then
+fi
+if [[ -f "${HOME}/.bash_profile"]]; then
     source "${HOME}/.bash_profile"
 fi
 
@@ -352,7 +354,8 @@ echo "$LAUNCHER $LAUNCH_ARGS $EXEC_PATH $PARAM_FILE $RESTART"
 echo done
 EOF
     info "submitting slurm batch script..."
-    sbatch "$BATCH_FILE"
+    cd ${ORIGINAL_DIR}
+    sbatch "${RUN_DIR}/${BATCH_FILE}"
 else
     # actually run locally
     info "running GIZMO..."
