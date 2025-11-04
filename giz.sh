@@ -179,17 +179,10 @@ if [[ "$JOB_NAME_SET" == "false" && "$NNODES" -gt 0 ]]; then
 fi
 
 # source bashrc or bash_profile if they exist
-<<<<<<< HEAD
 if [[ -f "${HOME}/.bashrc" ]]; then
     source "${HOME}/.bashrc"
 fi
 if [[ -f "${HOME}/.bash_profile" ]]; then
-=======
-if [[ -f "${HOME}/.bashrc"]]; then
-    source "${HOME}/.bashrc"
-fi
-if [[ -f "${HOME}/.bash_profile"]]; then
->>>>>>> 4446924b11a2f706e5e5d0c572a13c464fdc0b85
     source "${HOME}/.bash_profile"
 fi
 
