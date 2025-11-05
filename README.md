@@ -86,7 +86,7 @@ which will queue a job named "job_name" with 5 node, 14 total processes, 4 threa
 
 No specific requirements for `giz.sh`, but your system needs the GIZMO requirements. If your system has the `modules` infrastructure, you likely don't have to worry about this.
 
-If you don't have the `modules` command to use packages (e.g. you are on a local machine), then you will have to install the required packages (MPI, GSL, FFTW, HDF5) manually. On mac, if you have gcc/mpicc and brew installed (if you don't, just look up how to generically install them), just use
+If you don't have the `modules` command to use packages (e.g. you are on a local machine), then you will have to install the required packages (MPI, GSL, FFTW, HDF5) manually. On mac, if you have gcc/mpicc and brew installed (if you don't, just look up how to generically install them), use something like
 
 ```
 brew install open-mpi gsl hdf5 sundials # ...
