@@ -10,7 +10,7 @@
 #
 # Functionality:
 #    1) Creates a source code directory called "code" in the run directory (local by default).
-#            -- reads a preexisting local "code" directory, untars "code.tar", copies source code from ${GIZMO_SOURCE}, or clones the public/private repo
+#            -- reads a preexisting local "code" directory, untars "code.tar" or "code.tgz"/"code.tar.gz", copies source code from ${GIZMO_SOURCE}, or clones the public/private repo
 #    2) Generates/edits a "Config.sh" file for simulation settings before compilation.
 #            -- reads a preexisting "Config.sh" in source code directory if it exists, copies template file from source code or creates a blank file
 #    3) Compiles GIZMO source code.
@@ -48,6 +48,7 @@
 # TODO:
 #    1) Auto add some parameters like fftw2/fftw3
 #    2) Add installation of mpi, gsl, fftw, hdf5, etc. (if needed)
+#    3) check for parameter consistency + fix like openmp in config file and threads from -T
 
 
 set -e  # exit immediately on error
@@ -68,8 +69,10 @@ THREADS_PER_PROCESS=1       # set with -T flag (aka number of cpu threads per MP
 NNODES=0                    # set with -N flag (0 = no slurm queue, 1+ = 1+ slurm node(s))
 NPROCESSES=1                # set with -n flag (aka number of MPI tasks/processes, irrelevant if NNODES!=0)
 JOB_TIME="2-00:00:00"       # set with -t flag (D-HH:MM:SS, irrelevant if NNODES!=0)
-JOB_NAME="gizmo"        # set with -j flag (irrelevant if NNODES!=0)
+JOB_NAME="gizmo"            # set with -j flag (irrelevant if NNODES!=0)
 JOB_NAME_SET=false          # flags if -j was set
+PARTITION_NAME="normal"     # set with -p flag
+ALLOCATION_NAME=""          # set with -A flag
 
 # override with predefined variables if needed (e.g. export variabled in your .bashrc or .bash_profile)
 GIZMO_SYSTYPE=${GIZMO_SYSTYPE:-""}                            # set according to your system type e.g. Frontera or MacBookPro (see Makefile.systype in GIZMO docs)
@@ -77,7 +80,6 @@ GIZMO_SOURCE=${GIZMO_SOURCE:-""}                              # set if you have 
 MODULE_LIST=${GIZMO_MODULE_LIST:-"intel impi gsl hdf5 fftw3"} # adjust these modules according to your system (this is irrelevant for systems with no modules)
 EDITOR=${GIZMO_EDITOR:-"vim"}                                 # use your favorite editor (e.g. "emacs", "nano", "open", etc.)
 CODE_DIR=${GIZMO_CODE_DIR:-"code"}
-CODE_TAR=${GIZMO_CODE_TAR:-"${CODE_DIR}.tar"}
 TEMPLATE_CONFIG_FILE=${GIZMO_TEMPLATE_CONFIG_FILE:-"Template_Config.sh"}
 TEMPLATE_PARAMS_FILE=${GIZMO_TEMPLATE_PARAMS_FILE:-"Template_params.txt"}
 
@@ -85,7 +87,7 @@ TEMPLATE_PARAMS_FILE=${GIZMO_TEMPLATE_PARAMS_FILE:-"Template_params.txt"}
 # Parse arguments
 # ----------------------------
 print_help() {
-    less <<EOF
+    more <<EOF
 GIZ: One GIZMO Command To Rule Them All.
 
 Usage: giz [options]
@@ -116,6 +118,8 @@ Options:
   -n, --num-processes NUMBER          Specify number of processes run (default: 1, only relevant if N != 0)
   -t, --time TIME                     Specify time for the slurm job to run (default: 2-00:00:00, only relevant if N != 0)
   -j, --job-name STRING               Specify name for the slurm job (default: gizmo_job, only relevant if N != 0)
+  -p, --partition-name STRING         Specify partition name for slurm queue
+  -A, --allocation-name STRING        Specify allocation name for slurm queue
   -h, --help                          Show this help message
 
 Examples:
@@ -129,7 +133,6 @@ Predefined variables (set the following variables before running or export in .b
   GIZMO_SOURCE                 Optionally set this to a preexisting GIZMO source code directory to copy from (e.g. if you are using a custom GIZMO install)
   GIZMO_EDITOR                 Optionally set this to your preferred file editor for config and parameter files (default: "vim", e.g. "emacs", "nano", "open")
   GIZMO_CODE_DIR               Optionally set the name of the local copy of source code subdirectory (default: code)
-  GIZMO_CODE_TAR               Optionally set the name of the local tar of source code subdirectory (default: code.tar)
   GIZMO_TEMPLATE_CONFIG_FILE   Optionally set the name of the template config file to copy from if available (default: Template_Config.sh)
   GIZMO_TEMPLATE_PARAMS_FILE   Optionally set the name of the template parameter file to copy from if available (default: Template_params.txt)
 
@@ -157,6 +160,8 @@ while [[ $# -gt 0 ]]; do
         -n|-np|--num-processes|--ntasks) NPROCESSES="$2"; shift 2 ;;
         -t|--time) JOB_TIME="$2"; shift 2 ;;
         -j|--job-name) JOB_NAME="$2"; JOB_NAME_SET=true; shift 2 ;;
+        -p|--partition-name) PARTITION_NAME="$2"; shift 2 ;;
+        -A|--allocation-name) ALLOCATION_NAME="$2"; shift 2 ;;
         -h|--help) print_help ;;
         *) error "Unknown option: $1" ;;
     esac
@@ -188,9 +193,9 @@ fi
 
 # try to load modules
 if command -v module >/dev/null 2>&1; then
-    info "modules system available, loading in relevant modules..."
+    info "modules system available, loading in modules \"${MODULE_LIST}\" ..."
     module purge
-    module load ${MODULE_LIST}
+    module load $MODULE_LIST
 else
     info "no modules system found, assuming you have already installed relevant packages."
 fi
@@ -202,48 +207,54 @@ export OMP_NUM_THREADS=${THREADS_PER_PROCESS}
 # Step 1: Prepare source code
 # ----------------------------
 
-if [[ ! -d "$CODE_DIR" ]]; then
-    if [[ -d "$CODE_DIR" ]]; then
-        info "using existing ${CODE_DIR} directory."
-    elif [[ -f "${CODE_TAR}" ]]; then
-        info "extracting ${CODE_TAR}..."
-        tar xf ${CODE_TAR}
-    elif [[ -n "$GIZMO_SOURCE" && -d "$GIZMO_SOURCE" ]]; then
-        info "copying from \$GIZMO_SOURCE=$GIZMO_SOURCE"
-        cp -r "$GIZMO_SOURCE" "$CODE_DIR"
+if [[ -d "$CODE_DIR" ]]; then
+    info "using existing ${CODE_DIR} directory."
+elif [[ -f "${CODE_DIR}.tar" || -f  "${CODE_DIR}.tgz" || -f  "${CODE_DIR}.tar.gz" ]]; then
+    if [[ -f "${CODE_DIR}.tar" && ! -f  "${CODE_DIR}.tgz" && ! -f  "${CODE_DIR}.tar.gz" ]]; then
+        info "extracting ${CODE_DIR}.tar ..."
+        tar -xf ${CODE_DIR}.tar
+    elif [[ ! -f "${CODE_DIR}.tar" && -f  "${CODE_DIR}.tgz" && ! -f  "${CODE_DIR}.tar.gz" ]]; then
+        info "extracting ${CODE_DIR}.tgz ..."
+        tar -xzf ${CODE_DIR}.tgz
+    elif [[ ! -f "${CODE_DIR}.tar" && ! -f  "${CODE_DIR}.tgz" && -f  "${CODE_DIR}.tar.gz" ]]; then
+        info "extracting ${CODE_DIR}.tar.gz ..."
+        tar -xzf ${CODE_DIR}.tar.gz
     else
-        if [[ "$SKIP_MAKE" == true ]]; then
-            error "there is no source code directory and compilation is turned off so there is no executable to run!"
-        fi 
-        info "no local GIZMO source found, opting to clone repo instead..."
-        # clone repo
-        read -p "do you want to clone the private GIZMO repository instead of the public one? [y/n]: " REPLY
-        REPLY=${REPLY,,}  #lowercase
-        if [[ "$REPLY" == "y" || "$REPLY" == "yes" ]]; then
-            info "cloning private GIZMO repository (bitbucket)..."
-            git clone https://bitbucket.org/phopkins/gizmo.git "$CODE_DIR"
+        error "there are multiple tarred code directories with name \"${CODE_DIR}\" and it is not clear which extension to use, please rename or move the ones you don't want"
+    fi
+elif [[ -n "$GIZMO_SOURCE" && -d "$GIZMO_SOURCE" ]]; then
+    info "copying from \$GIZMO_SOURCE=$GIZMO_SOURCE"
+    cp -r "$GIZMO_SOURCE" "$CODE_DIR"
+else
+    if [[ "$SKIP_MAKE" == true ]]; then
+        error "there is no source code directory and compilation is turned off so there is no executable to run!"
+    fi 
+    info "no local GIZMO source found, opting to clone repo instead..."
+    # clone repo
+    read -p "do you want to clone the private GIZMO repository instead of the public one? [y/n]: " REPLY
+    REPLY=${REPLY,,}  #lowercase
+    if [[ "$REPLY" == "y" || "$REPLY" == "yes" ]]; then
+        info "cloning private GIZMO repository (bitbucket)..."
+        git clone https://bitbucket.org/phopkins/gizmo.git "$CODE_DIR"
+    else
+        info "cloning public GIZMO repository (bitbucket)..."
+        if git clone https://bitbucket.org/phopkins/gizmo-public.git "$CODE_DIR"; then
+            info "successfully cloned GIZMO from bitbucket."
         else
-            info "cloning public GIZMO repository (bitbucket)..."
-            if git clone https://bitbucket.org/phopkins/gizmo-public.git "$CODE_DIR"; then
-                info "successfully cloned GIZMO from bitbucket."
+            warn "bitbucket clone failed, falling back to github ..."
+            if git clone https://github.com/pfhopkins/gizmo-public.git "$CODE_DIR"; then
+                info "successfully cloned GIZMO from github."
             else
-                warn "bitbucket clone failed, falling back to github ..."
-                if git clone https://github.com/pfhopkins/gizmo-public.git "$CODE_DIR"; then
-                    info "successfully cloned GIZMO from github."
-                else
-                    error "failed to clone from both bitbucket and github."
-                fi
+                error "failed to clone from both bitbucket and github."
             fi
         fi
-        # set system type
-        if [[ "$GIZMO_SYSTYPE" == "" ]]; then
-            error "GIZMO_SYSTYPE is not set. Please run \"export GIZMO_SYSTYPE= \" prior to or in your .bashrc or .bash_profile file."
-        fi
-        echo -e "\nSYSTYPE=\"${GIZMO_SYSTYPE}\"" >> "${CODE_DIR}/Makefile.systype"
-        info "set system type to ${GIZMO_SYSTYPE} in ${CODE_DIR}/Makefile.systype"
     fi
-else
-    info "found existing code directory."
+    # set system type
+    if [[ "$GIZMO_SYSTYPE" == "" ]]; then
+        error "GIZMO_SYSTYPE is not set. Please run \"export GIZMO_SYSTYPE=YourSystemType\" with your system type prior to running or in your .bashrc or .bash_profile file."
+    fi
+    echo -e "\nSYSTYPE=\"${GIZMO_SYSTYPE}\"" >> "${CODE_DIR}/Makefile.systype"
+    info "set system type to ${GIZMO_SYSTYPE} in ${CODE_DIR}/Makefile.systype"
 fi
 
 
@@ -273,6 +284,20 @@ fi
 if [[ "$SKIP_MAKE" == false ]]; then
     cd "$CODE_DIR"
     
+    # try to auto-detect gsl location
+    if [[ -z "${GSL_HOME}" ]]; then
+        if [[ -n "${GSL_DIR}" ]]; then
+            export GSL_HOME="${GSL_DIR}"
+        elif [[ -n "${TACC_GSL_DIR}" ]]; then
+            export GSL_HOME="${TACC_GSL_DIR}"
+        elif [[ -d "/opt/apps/gsl" ]]; then
+            # fallback heuristic
+            export GSL_HOME=$(ls -d /opt/apps/gsl/* | head -n 1)
+        else
+            echo "[warn] could not auto-detect gsl installation; set GSL_HOME manually"
+        fi
+    fi
+
     # compile
     info "compiling ${EXEC_FILE} ..."
     make -j$(nproc) CONFIG="$CONFIG_FILE" EXEC="$EXEC_FILE" || error "compilation failed."
@@ -355,7 +380,11 @@ echo done
 EOF
     info "submitting slurm batch script..."
     cd ${ORIGINAL_DIR}
-    sbatch "${RUN_DIR}/${BATCH_FILE}"
+    if [[ ALLOCATION_NAME == "" ]]; then
+        sbatch -p ${PARTITION_NAME} "${RUN_DIR}/${BATCH_FILE}"
+    else
+        sbatch -p "${PARTITION_NAME}" -A "${ALLOCATION_NAME}" "${RUN_DIR}/${BATCH_FILE}"
+    fi
 else
     # actually run locally
     info "running GIZMO..."
