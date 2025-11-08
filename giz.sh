@@ -284,8 +284,16 @@ if [[ "$SKIP_MAKE" == false ]]; then
     $EDITOR "${CODE_DIR}/$CONFIG_FILE"
 fi
 
-# move TREECOOL over
-cp "${CODE_DIR}/cooling/TREECOOL" "${RUN_DIR}/TREECOOL"  # should really check for this
+# move TREECOOL over and get spcool tables (should really depend on config)
+if [[ ! -f "${RUN_DIR}/TREECOOL" ]]; then
+    info "getting TREECOOL..."
+    grep -v '^##' "${CODE_DIR}/cooling/TREECOOL" > "${RUN_DIR}/TREECOOL"
+fi
+if [[ ! -d "${RUN_DIR}/spcool_tables" ]]; then
+    info "getting spcool tables..."
+    cd "$RUN_DIR"
+    wget -qO- http://www.tapir.caltech.edu/~phopkins/public/spcool_tables.tgz | gunzip | tar xf -
+fi
 
 # ----------------------------
 # Step 3: Compile (if not skipped)
@@ -378,7 +386,7 @@ if [[ "$NNODES" -gt 0 ]]; then
 #SBATCH --partition=${PARTITION_NAME}
 #SBATCH --job-name=${JOB_NAME}
 #SBATCH --nodes=${NNODES}
-#SBATCH --ntasks=${NPROCESSES}
+#SBATCH --ntasks-per-node=${NPROCESSES_PER_NODE}
 #SBATCH --time=${JOB_TIME}
 
 module purge
@@ -394,12 +402,20 @@ echo "$LAUNCHER $LAUNCH_ARGS $EXEC_PATH $PARAM_FILE $RESTART"
 $LAUNCHER $LAUNCH_ARGS "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>${JOB_NAME}.out 2>${JOB_NAME}.err
 
 echo "Job ended."
-sacct --format=JobID,JobName,Partition,MaxRSS,Elapsed,ExitCode -j ${SLURM_JOBID}
+sacct -j \$SLURM_JOBID --format=JobID,JobName,Partition,MaxRSS,Elapsed,ExitCode
 exit
 EOF
-    info "submitting slurm batch script..."
     cd ${ORIGINAL_DIR}
-    sbatch "${RUN_DIR}/${BATCH_FILE}"
+    read -p "do you want to submit the slurm script now? [y/n]: " REPLY
+    REPLY=${REPLY,,}  #lowercase
+    if [[ "$REPLY" == "y" || "$REPLY" == "yes" ]]; then
+        info "submitting slurm batch script..."
+        sbatch "${RUN_DIR}/${BATCH_FILE}"
+    else
+        info "skipping the batch submit..."
+        info "you can submit later with: \"sbatch ${RUN_DIR}/${BATCH_FILE}\""
+        info "you likely can submit a test with: \"sbatch -p "development" -n 1 -t "1:00:00" ${RUN_DIR}/${BATCH_FILE}\"" # todo see if frontera to get msg
+    fi
 else
     # actually run locally
     info "running GIZMO..."
