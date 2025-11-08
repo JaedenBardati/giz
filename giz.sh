@@ -21,20 +21,20 @@
 #            -- using the -r flag is for running from restart files (sets the GIZMO restart flag to 1)
 #
 # File structure:
-#             run directory (-d)
-#          /         |           \
-#        code   params.txt (-p)   output
+#           run directory (-d)
+#          /         |       \
+#        code   params.txt   output
 #       /    \                   
-# GIZMO (-g)  Config.sh (-c)
+# GIZMO     Config.sh 
 #
 # Example Usage:
-#    giz                               # standard call (called in GIZMO run directory)
-#    giz -s                            # skips compilation phase (only adjusts parameter file and runs GIZMO)
-#    giz -r                            # when running from restart files (sets GIZMO flag for restart files)
-#    giz -d path/to/run/directory      # uses the inputted path to the run directory
-#    giz -c "Config_alt.sh"            # uses an alternative filename for Config.sh (otherwise the same)
-#    giz -g "GIZMO_alt"                # uses an alternative filename for GIZMO executable (otherwise the same)
-#    giz -p "params_alt.txt"           # uses an alternative filename for params.txt parameter file (otherwise the same)
+#    giz                                  # standard call (called in GIZMO run directory)
+#    giz -s                               # skips compilation phase (only adjusts parameter file and runs GIZMO)
+#    giz -r                               # when running from restart files (sets GIZMO flag for restart files)
+#    giz -d path/to/run/directory         # uses the inputted path to the run directory
+#    giz --config-name "Config_alt.sh"    # uses an alternative filename for Config.sh (otherwise the same)
+#    giz --exec-name "GIZMO_alt"          # uses an alternative filename for GIZMO executable (otherwise the same)
+#    giz --param-name "params_alt.txt"    # uses an alternative filename for params.txt parameter file (otherwise the same)
 #
 # If you have your own version of GIZMO source code you want to copy from (e.g. that is not the public or private repo version) set GIZMO_SOURCE to that directory before running.
 #
@@ -48,7 +48,7 @@
 # TODO:
 #    1) Auto add some parameters like fftw2/fftw3
 #    2) Add installation of mpi, gsl, fftw, hdf5, etc. (if needed)
-#    3) check for parameter consistency + fix like openmp in config file and threads from -T
+#    3) check for parameter consistency + fix like openmp in config file and threads from -T AND check if cooling on for TREECOOL moving?
 
 
 set -e  # exit immediately on error
@@ -58,21 +58,21 @@ set -e  # exit immediately on error
 # ------------------------
 # override with flags
 RUN_DIR=${PWD}              # set with -d flag
-CONFIG_FILE="Config.sh"     # set with -c flag
-PARAM_FILE="params.txt"     # set with -p flag
-EXEC_FILE="GIZMO"           # set with -g flag
+CONFIG_FILE="Config.sh"     # set with --config-name flag
+PARAM_FILE="params.txt"     # set with --param-name flag
+EXEC_FILE="GIZMO"           # set with --exec-name flag
 
 SKIP_MAKE=false             # set to true with -s flag
 RESTART=0                   # set to 1 with -r flag
 
 THREADS_PER_PROCESS=1       # set with -T flag (aka number of cpu threads per MPI task/process, depends on CPU architecture)
 NNODES=0                    # set with -N flag (0 = no slurm queue, 1+ = 1+ slurm node(s))
-NPROCESSES=1                # set with -n flag (aka number of MPI tasks/processes, irrelevant if NNODES!=0)
+NPROCESSES_PER_NODE=1       # set with -n flag (aka number of MPI tasks/processes, irrelevant if NNODES!=0)
 JOB_TIME="2-00:00:00"       # set with -t flag (D-HH:MM:SS, irrelevant if NNODES!=0)
 JOB_NAME="gizmo"            # set with -j flag (irrelevant if NNODES!=0)
 JOB_NAME_SET=false          # flags if -j was set
 PARTITION_NAME="normal"     # set with -p flag
-ALLOCATION_NAME=""          # set with -A flag
+ALLOCATION_NAME=${GIZMO_DEFAULT_ACCOUNT_NAME:-""}   # override with -A flag, or set default with GIZMO_DEFAULT_ACCOUNT_NAME if exists (if not, it tries to submit without specifying allocation)
 
 # override with predefined variables if needed (e.g. export variabled in your .bashrc or .bash_profile)
 GIZMO_SYSTYPE=${GIZMO_SYSTYPE:-""}                            # set according to your system type e.g. Frontera or MacBookPro (see Makefile.systype in GIZMO docs)
@@ -100,19 +100,19 @@ Basic functionality:
   5. Runs the GIZMO executable locally (-r for restarts)
 
 File structure:
-            run directory (-d)
-         /         |           \\
-       code   params.txt (-p)   output
+          run directory (-d)
+         /         |       \\
+       code   params.txt   output
       /    \                   
-GIZMO (-g)  Config.sh (-c)
+GIZMO     Config.sh
 
 Options:
   -s, --skip-make                     Skip compilation
   -r, --restart                       Run from restart files
   -d DIR                              Specify run directory (default: current directory)
-  -c FILE                             Specify configuration filename (default: Config.sh)
-  -g FILE                             Specify executable filename (default: GIZMO)
-  -p FILE                             Specify parameter filename (default: params.txt)
+  --config-name FILE                  Specify configuration filename (default: Config.sh)
+  --exec-name FILE                    Specify executable filename (default: GIZMO)
+  --param-name FILE                   Specify parameter filename (default: params.txt)
   -T, --threads-per-process NUMBER    Specify number of threads per process (default: 1)
   -N, --num-nodes NUMBER              Specify number of nodes to run on (default: 0 = no slurm queue)
   -n, --num-processes NUMBER          Specify number of processes run (default: 1, only relevant if N != 0)
@@ -123,9 +123,9 @@ Options:
   -h, --help                          Show this help message
 
 Examples:
-  giz -c "Config_alt.sh" -g "GIZMO_alt" -p "params_alt.txt"  # run GIZMO locally with alternative config, executable and parameter filenames 
+  giz --config-name "Config_alt.sh" --exec-name "GIZMO_alt" --param-name "params_alt.txt"  # run GIZMO locally with alternative config, executable and parameter filenames 
   giz -N 1 -n 8 -T 7 -t "12:00:00"                           # queue GIZMO run on 1 node, 8 mpi processes, 7 threads per process, for 12 hours
-  giz -sr -N 5 -n 20                                         # queue restart run with 20 mpi processes across 5 nodes, skipping compilation
+  giz -sr -N 5 -n 20 -T 2                                    # queue restart run with 20 mpi processes across 5 nodes, 2 threads per process, skipping compilation
 
 Predefined variables (set the following variables before running or export in .bashrc or .bash_profile):
   GIZMO_SYSTYPE                If cloning GIZMO, must set this to your GIZMO system type (e.g. "Frontera" or "MacBookPro", see Makefile.systype, NO DEFAULT!)
@@ -135,6 +135,7 @@ Predefined variables (set the following variables before running or export in .b
   GIZMO_CODE_DIR               Optionally set the name of the local copy of source code subdirectory (default: code)
   GIZMO_TEMPLATE_CONFIG_FILE   Optionally set the name of the template config file to copy from if available (default: Template_Config.sh)
   GIZMO_TEMPLATE_PARAMS_FILE   Optionally set the name of the template parameter file to copy from if available (default: Template_params.txt)
+  GIZMO_DEFAULT_ACCOUNT_NAME   Optionally set the default account (allocation) to be charged for slurm queue
 
 GIZMO documentation (for Config.sh, params.txt, and SYSTYPE): 
   http://www.tapir.caltech.edu/~phopkins/Site/GIZMO_files/gizmo_documentation.html
@@ -152,9 +153,9 @@ while [[ $# -gt 0 ]]; do
         -r|--restart) RESTART=1; shift ;;
         -sr|-rs) RESTART=1; SKIP_MAKE=true; shift ;;
         -d) RUN_DIR="$2"; shift 2 ;;
-        -c) CONFIG_FILE="$2"; shift 2 ;;
-        -g) EXEC_FILE="$2"; shift 2 ;;
-        -p) PARAM_FILE="$2"; shift 2 ;;
+        --config-name) CONFIG_FILE="$2"; shift 2 ;;
+        --exec-name) EXEC_FILE="$2"; shift 2 ;;
+        --param-name) PARAM_FILE="$2"; shift 2 ;;
         -T|--threads-per-process|--cpus-per-task) THREADS_PER_PROCESS="$2"; shift 2 ;;
         -N|--num-nodes|--nodes) NNODES="$2"; shift 2 ;;
         -n|-np|--num-processes|--ntasks) NPROCESSES="$2"; shift 2 ;;
@@ -166,6 +167,12 @@ while [[ $# -gt 0 ]]; do
         *) error "Unknown option: $1" ;;
     esac
 done
+
+if (( NPROCESSES % NNODES != 0 )); then
+    error "The number of processes (${NPROCESSES}) is not a multiple of the number of nodes (${NNODES})"
+fi
+NPROCESSES_PER_NODE=$((NPROCESSES / NNODES))
+
 
 # ----------------------------
 # Step 0: Prepare everything (likely repeat before running gizmo in slurm)
@@ -277,6 +284,8 @@ if [[ "$SKIP_MAKE" == false ]]; then
     $EDITOR "${CODE_DIR}/$CONFIG_FILE"
 fi
 
+# move TREECOOL over
+cp "${CODE_DIR}/cooling/TREECOOL" "${RUN_DIR}/TREECOOL"  # should really check for this
 
 # ----------------------------
 # Step 3: Compile (if not skipped)
@@ -339,52 +348,58 @@ fi
 if command -v ibrun >/dev/null 2>&1; then
     info "using ibrun for mpi launch"
     LAUNCHER="ibrun"
-    LAUNCH_ARGS="-n ${NPROCESSES}"
+    LAUNCH_ARGS="-n ${NPROCESSES_PER_NODE}"
 elif command -v aprun >/dev/null 2>&1; then
     info "using aprun for mpi launch"
     LAUNCHER="aprun"
-    LAUNCH_ARGS="-n ${NPROCESSES}"
+    LAUNCH_ARGS="-n ${NPROCESSES_PER_NODE}"
 elif command -v srun >/dev/null 2>&1; then
     info "using srun for mpi launch"
     LAUNCHER="srun"
-    LAUNCH_ARGS="-n ${NPROCESSES}"
+    LAUNCH_ARGS="-n ${NPROCESSES_PER_NODE}"
 elif command -v mpirun >/dev/null 2>&1; then
     info "using mpirun for mpi launch"
     LAUNCHER="mpirun"
-    LAUNCH_ARGS="-np ${NPROCESSES}"
+    LAUNCH_ARGS="-np ${NPROCESSES_PER_NODE}"
 else
     error "no mpi launcher found (ibrun/aprun/srun/mpirun)"
 fi
 
 # either submit a slurm batch or run directly
 if [[ "$NNODES" -gt 0 ]]; then
-    info "making slurm batch script..."
-    
     BATCH_FILE="submit_${JOB_NAME}.sh"
-    cat > "$BATCH_FILE" <<EOF
-#!/bin/bash
+    info "making slurm batch script ${BATCH_FILE} ..."
+
+    echo "#!/bin/bash" > "$BATCH_FILE" 
+    if [ -n "$ALLOCATION_NAME" ]; then
+        echo "#SBATCH --account=$ALLOCATION_NAME" >> "$BATCH_FILE"
+    fi
+    cat >> "$BATCH_FILE" <<EOF
+#SBATCH --partition=${PARTITION_NAME}
 #SBATCH --job-name=${JOB_NAME}
 #SBATCH --nodes=${NNODES}
 #SBATCH --ntasks=${NPROCESSES}
 #SBATCH --time=${JOB_TIME}
 
-cd "${RUN_DIR}"
-export OMP_NUM_THREADS=${THREADS_PER_PROCESS}
-source "${HOME}/.bashrc"
 module purge
 module load ${MODULE_LIST}
 
+cd "${RUN_DIR}"
+source "${HOME}/.bashrc"
+
+export OMP_NUM_THREADS=${THREADS_PER_PROCESS}
+export IBRUN_QUIET=1
+
 echo "$LAUNCHER $LAUNCH_ARGS $EXEC_PATH $PARAM_FILE $RESTART"
 $LAUNCHER $LAUNCH_ARGS "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>${JOB_NAME}.out 2>${JOB_NAME}.err
-echo done
+
+echo "Job ended."
+sacct --format=JobID,JobName,Partition,MaxRSS,Elapsed,ExitCode -j ${SLURM_JOBID}
+exit
 EOF
     info "submitting slurm batch script..."
     cd ${ORIGINAL_DIR}
-    if [[ ALLOCATION_NAME == "" ]]; then
-        sbatch -p ${PARTITION_NAME} "${RUN_DIR}/${BATCH_FILE}"
-    else
-        sbatch -p "${PARTITION_NAME}" -A "${ALLOCATION_NAME}" "${RUN_DIR}/${BATCH_FILE}"
-    fi
+    sbatch "${RUN_DIR}/${BATCH_FILE}"
 else
     # actually run locally
     info "running GIZMO..."
