@@ -414,7 +414,7 @@ EOF
     else
         info "skipping the batch submit..."
         info "you can submit later with: \"sbatch ${RUN_DIR}/${BATCH_FILE}\""
-        info "you likely can submit a test with: \"sbatch -p "development" -n 1 -t "1:00:00" ${RUN_DIR}/${BATCH_FILE}\"" # todo see if frontera to get msg
+        info "In Frontera, you can submit a test with: \"sbatch -p "development" -N 1 -t "1:00:00" ${RUN_DIR}/${BATCH_FILE}\"" # todo see if frontera to get msg
     fi
 else
     # actually run locally
