@@ -317,7 +317,7 @@ if [[ "$SKIP_MAKE" == false ]]; then
 
     # compile
     info "compiling ${EXEC_FILE} ..."
-    make -j$(nproc) CONFIG="$CONFIG_FILE" EXEC="$EXEC_FILE" || error "compilation failed."
+    make -j$(nproc) CONFIG="$CONFIG_FILE" EXEC="$EXEC_FILE" || error "compilation failed; current directory: $(pwd) ; command: make -j$(nproc) CONFIG=\"${CONFIG_FILE}\" EXEC=\"${EXEC_FILE}\""
     info "compilation successful."
 
     cd "$RUN_DIR"
