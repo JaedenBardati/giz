@@ -1,5 +1,9 @@
+#!/usr/bin/env bash
+REPO_LOCATION="$(cd "$(dirname "$0")" && pwd)" # start in the repo directory (assuming setup.sh is in the root)
+
 # This sets up the giz command for your system. Call this ONLY ONCE EVER and before using giz.sh
 # Adjust the below paramters to match your machine.
+# TODO severely edit -> similar to setup.sh from jaba + user input options --> + add macbook support
 
 ##########################
 #####   PARAMETERS   #####
@@ -46,12 +50,12 @@ if [[ "$GIZMO_SYSTYPE" == "Frontera" ]]; then
     BASHRC_FILE="${BASHRC_FILE_OVERRIDE:-$HOME/.bashrc}"
     FFTW_VERSION="${FFTW_VERSION_OVERRIDE:-3}"
     if [[ $FFTW_VERSION == 3 ]]; then
-        fftw_module="fftw3"
+        fftw_module="fftw3/3.3.10"
     elif [[ $FFTW_VERSION == 2 ]]; then
         fftw_module="fftw2"
     else
         error "FFTW version '${FFTW_VERSION}' not supported."
-    extra_bashrc_lines+=("export GIZMO_MODULE_LIST=\"intel impi gsl hdf5 ${fftw_module}\"")
+    extra_bashrc_lines+=("export GIZMO_MODULE_LIST=\"intel/19.1.1 impi/19.0.9 gsl/2.8 hdf5/1.14.6 ${fftw_module}\"")
     extra_bashrc_lines+=('umask 022')
     extra_bashrc_lines+=('ulimit -s unlimited')
     info ('tips for GIZMO on Frontera: most nodes are 56 cores, so use n/N (processes per node) = 56/T (56 divided by number of threads per process) = whole number. for small runs use n/N=28, T=2, medium runs use n/N=14, T=4, and very large runs use n/N=7, T=8')
@@ -60,7 +64,7 @@ if [[ "$GIZMO_SYSTYPE" == "Frontera" ]]; then
 elif [[ "$GIZMO_SYSTYPE" == "MacBookPro" ]]; then
     BASHRC_FILE="${BASHRC_FILE_OVERRIDE:-$HOME/.bash_profile}"
     error "macbook implementation is not yet complete"
-
+    
 ### IMPLEMENT ANY NEW SYSTEM SETUP ABOVE HERE ###
 else
     error "GIZMO system type '${GIZMO_SYSTYPE}' not yet supported. please write your own in giz_setup.sh"
@@ -75,13 +79,21 @@ fi
 
 # append everything to bashrc
 {
-    echo "## GIZ settings ##"
+    echo "# >>> Added by GIZ >>>"
     echo "alias giz=\"${LOCAL_DIR}/giz.sh\""
     echo "export GIZMO_SYSTYPE=\"${GIZMO_SYSTYPE}\""
     for line in "${extra_bashrc_lines[@]}"; do
         echo "$line"
     done
-    echo "export GIZ_HAS_BEEN_SETUP_FLAG=1"
-    echo "##################"
+    
+    read -p "Add giz developer aliases? [y/n] " add_dev_aliases
+    if [[ "$add_dev_aliases" == "y" ]]; then
+        echo "alias edit_giz=\"vim ~/GIZMO/giz/giz.sh\""
+    fi
+
+    echo "export GIZ_HAS_BEEN_SETUP_FLAG=\"${GIZ_HAS_BEEN_SETUP_FLAG}\""
+    echo "# <<< Added by GIZ <<<"
 } >> "${BASHRC_FILE}"
+
+exit 0
 
