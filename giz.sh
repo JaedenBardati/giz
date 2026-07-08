@@ -67,10 +67,11 @@ RESTART=0                   # set to 1 with -r flag
 
 THREADS_PER_PROCESS=1       # set with -T flag (aka number of cpu threads per MPI task/process, depends on CPU architecture)
 NNODES=0                    # set with -N flag (0 = no slurm queue, 1+ = 1+ slurm node(s))
+NPROCESSES=0
 NPROCESSES_PER_NODE=1       # set with -n flag (aka number of MPI tasks/processes, irrelevant if NNODES!=0)
 JOB_TIME="2-00:00:00"       # set with -t flag (D-HH:MM:SS, irrelevant if NNODES!=0)
 JOB_NAME="gizmo"            # set with -j flag (irrelevant if NNODES!=0)
-JOB_NAME_SET=false          # flags if -j was set
+JOB_NAME_SET=false          # flags if -j was set (if false, overrides with directory name)
 PARTITION_NAME="normal"     # set with -p flag
 ALLOCATION_NAME=${GIZMO_DEFAULT_ACCOUNT_NAME:-""}   # override with -A flag, or set default with GIZMO_DEFAULT_ACCOUNT_NAME if exists (if not, it tries to submit without specifying allocation)
 
@@ -168,11 +169,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if (( NPROCESSES % NNODES != 0 )); then
-    error "The number of processes (${NPROCESSES}) is not a multiple of the number of nodes (${NNODES})"
+if [[ "$NNODES" != "0" ]]; then
+    if (( NPROCESSES % NNODES != 0 )); then
+        error "The number of processes (${NPROCESSES}) is not a multiple of the number of nodes (${NNODES})"
+    fi
+    NPROCESSES_PER_NODE=$((NPROCESSES / NNODES))
 fi
-NPROCESSES_PER_NODE=$((NPROCESSES / NNODES))
-
 
 # ----------------------------
 # Step 0: Prepare everything (likely repeat before running gizmo in slurm)
@@ -244,15 +246,15 @@ else
         info "cloning private GIZMO repository (bitbucket)..."
         git clone https://bitbucket.org/phopkins/gizmo.git "$CODE_DIR"
     else
-        info "cloning public GIZMO repository (bitbucket)..."
-        if git clone https://bitbucket.org/phopkins/gizmo-public.git "$CODE_DIR"; then
-            info "successfully cloned GIZMO from bitbucket."
+        info "cloning public GIZMO repository (github)..."
+        if git clone https://github.com/pfhopkins/gizmo-public.git "$CODE_DIR"; then
+            info "successfully cloned GIZMO from github."
         else
-            warn "bitbucket clone failed, falling back to github ..."
-            if git clone https://github.com/pfhopkins/gizmo-public.git "$CODE_DIR"; then
-                info "successfully cloned GIZMO from github."
+            warn "github clone failed, falling back to bitbucket ..."
+            if git clone https://bitbucket.org/phopkins/gizmo-public.git "$CODE_DIR"; then
+                info "successfully cloned GIZMO from bitbucket."
             else
-                error "failed to clone from both bitbucket and github."
+                error "failed to clone from both github and bitbucket."
             fi
         fi
     fi
@@ -294,6 +296,10 @@ if [[ ! -d "${RUN_DIR}/spcool_tables" ]]; then
     cd "$RUN_DIR"
     wget -qO- http://www.tapir.caltech.edu/~phopkins/public/spcool_tables.tgz | gunzip | tar xf -
 fi
+
+# ensure that there is an output directory (todo: ensure this is the same as what is later entered in params.txt)
+OUTPUT_DIR_NAME="output/"
+mkdir -p "${RUN_DIR}/${OUTPUT_DIR_NAME}"
 
 # ----------------------------
 # Step 3: Compile (if not skipped)
@@ -375,7 +381,7 @@ fi
 
 # either submit a slurm batch or run directly
 if [[ "$NNODES" -gt 0 ]]; then
-    BATCH_FILE="submit_${JOB_NAME}.sh"
+    BATCH_FILE="submit.sh" #"submit_${JOB_NAME}.sh"
     info "making slurm batch script ${BATCH_FILE} ..."
 
     echo "#!/bin/bash" > "$BATCH_FILE" 
@@ -399,7 +405,7 @@ export OMP_NUM_THREADS=${THREADS_PER_PROCESS}
 export IBRUN_QUIET=1
 
 echo "$LAUNCHER $LAUNCH_ARGS $EXEC_PATH $PARAM_FILE $RESTART"
-$LAUNCHER $LAUNCH_ARGS "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>${JOB_NAME}.out 2>${JOB_NAME}.err
+$LAUNCHER $LAUNCH_ARGS "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>gizmo.out 2>gizmo.err #1>${JOB_NAME}.out 2>${JOB_NAME}.err
 
 echo "Job ended."
 sacct -j \$SLURM_JOBID --format=JobID,JobName,Partition,MaxRSS,Elapsed,ExitCode
@@ -420,7 +426,7 @@ else
     # actually run locally
     info "running GIZMO..."
     echo "$LAUNCHER $LAUNCH_ARGS $EXEC_PATH $PARAM_FILE $RESTART"
-    $LAUNCHER $LAUNCH_ARGS "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>${JOB_NAME}.out 2>${JOB_NAME}.err
+    $LAUNCHER $LAUNCH_ARGS "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>gizmo.out 2>gizmo.err #1>${JOB_NAME}.out 2>${JOB_NAME}.err
 fi
 
 info "done"

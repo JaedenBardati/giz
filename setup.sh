@@ -58,7 +58,7 @@ if [[ "$GIZMO_SYSTYPE" == "Frontera" ]]; then
     extra_bashrc_lines+=("export GIZMO_MODULE_LIST=\"intel/19.1.1 impi/19.0.9 gsl/2.8 hdf5/1.14.6 ${fftw_module}\"")
     extra_bashrc_lines+=('umask 022')
     extra_bashrc_lines+=('ulimit -s unlimited')
-    info ('tips for GIZMO on Frontera: most nodes are 56 cores, so use n/N (processes per node) = 56/T (56 divided by number of threads per process) = whole number. for small runs use n/N=28, T=2, medium runs use n/N=14, T=4, and very large runs use n/N=7, T=8')
+    info 'tips for GIZMO on Frontera: most nodes are 56 cores, so use n/N (processes per node) = 56/T (56 divided by number of threads per process) = whole number. for small runs use n/N=28, T=2, medium runs use n/N=14, T=4, and very large runs use n/N=7, T=8'
 
 #### MACBOOK PRO ####
 elif [[ "$GIZMO_SYSTYPE" == "MacBookPro" ]]; then
