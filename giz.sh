@@ -240,21 +240,30 @@ else
     fi 
     info "no local GIZMO source found, opting to clone repo instead..."
     # clone repo
-    read -p "do you want to clone the private GIZMO repository instead of the public one? [y/n]: " REPLY
+    read -p "do you want to clone the private GIZMO repository instead of the public one? [y/n]: " REPLY # note: private version is now public
     REPLY=${REPLY,,}  #lowercase
     if [[ "$REPLY" == "y" || "$REPLY" == "yes" ]]; then
-        info "cloning private GIZMO repository (bitbucket)..."
-        git clone https://bitbucket.org/phopkins/gizmo.git "$CODE_DIR"
+        info "cloning private GIZMO repository (github)..."
+        if git clone https://github.com/pfhopkins/gizmo.git "$CODE_DIR"; then
+            info "sucessfully cloned GIZMO from github."
+        else
+            warn "github clone failed, falling back to old bitbucket version ..."
+            if git clone https://bitbucket.org/phopkins/gizmo.git "$CODE_DIR"; then
+                info "successfully cloned GIZMO from bitbucket."
+            else
+                error "failed to clone GIZMO from both github and bitbucket."
+            fi
+        fi
     else
-        info "cloning public (cpp branch) GIZMO repository (github)..."
-        if git clone https://github.com/pfhopkins/gizmo.git "$CODE_DIR"; then   # note: different from gizmo-public.git (which seems to be no longer supported)
-            info "successfully cloned GIZMO from github."
+        info "cloning public GIZMO repository (github)..."
+        if git clone https://github.com/pfhopkins/gizmo-public.git "$CODE_DIR"; then
+            info "successfully cloned GIZMO-public from github."
         else
             warn "github clone failed, falling back to old bitbucket version ..."
             if git clone https://bitbucket.org/phopkins/gizmo-public.git "$CODE_DIR"; then
-                info "successfully cloned GIZMO from bitbucket."
+                info "successfully cloned GIZMO-public from bitbucket."
             else
-                error "failed to clone from both github and bitbucket."
+                error "failed to clone GIZMO-public from both github and bitbucket."
             fi
         fi
     fi
