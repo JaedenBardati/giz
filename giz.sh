@@ -246,11 +246,11 @@ else
         info "cloning private GIZMO repository (bitbucket)..."
         git clone https://bitbucket.org/phopkins/gizmo.git "$CODE_DIR"
     else
-        info "cloning public GIZMO repository (github)..."
-        if git clone https://github.com/pfhopkins/gizmo-public.git "$CODE_DIR"; then
+        info "cloning public (cpp branch) GIZMO repository (github)..."
+        if git clone https://github.com/pfhopkins/gizmo.git "$CODE_DIR"; then   # note: different from gizmo-public.git (which seems to be no longer supported)
             info "successfully cloned GIZMO from github."
         else
-            warn "github clone failed, falling back to bitbucket ..."
+            warn "github clone failed, falling back to old bitbucket version ..."
             if git clone https://bitbucket.org/phopkins/gizmo-public.git "$CODE_DIR"; then
                 info "successfully cloned GIZMO from bitbucket."
             else
