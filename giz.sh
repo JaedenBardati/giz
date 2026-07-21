@@ -18,7 +18,7 @@
 #    4) Generates/edits a "params.txt" file for simulation settings after compilation.
 #            -- reads a preexisting "Config.sh" in source code directory if it exists, copies template file from source code or creates a blank file
 #    5) Runs GIZMO executable in run directory.
-#            -- using the -r flag is for running from restart files (sets the GIZMO restart flag to 1)
+#            -- using the -r flag is for running from restart files (sets the GIZMO restart flag to 1), or use -r2 for restart from snapshot (sets flag to 2)
 #
 # File structure:
 #           run directory (-d)
@@ -152,6 +152,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -s|--skip-make) SKIP_MAKE=true; shift ;;
         -r|--restart) RESTART=1; shift ;;
+        -r2|--restart2) RESTART=2; shift ;;
         -sr|-rs) RESTART=1; SKIP_MAKE=true; shift ;;
         -d) RUN_DIR="$2"; shift 2 ;;
         --config-name) CONFIG_FILE="$2"; shift 2 ;;
