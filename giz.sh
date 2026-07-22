@@ -372,19 +372,19 @@ fi
 if command -v ibrun >/dev/null 2>&1; then
     info "using ibrun for mpi launch"
     LAUNCHER="ibrun"
-    LAUNCH_ARGS="-n ${NPROCESSES_PER_NODE}"
+    NON_SLURM_LAUNCH_ARGS=" -n ${NPROCESSES}"
 elif command -v aprun >/dev/null 2>&1; then
     info "using aprun for mpi launch"
     LAUNCHER="aprun"
-    LAUNCH_ARGS="-n ${NPROCESSES_PER_NODE}"
+    NON_SLURM_LAUNCH_ARGS=" -n ${NPROCESSES}"
 elif command -v srun >/dev/null 2>&1; then
     info "using srun for mpi launch"
     LAUNCHER="srun"
-    LAUNCH_ARGS="-n ${NPROCESSES_PER_NODE}"
+    NON_SLURM_LAUNCH_ARGS=" -n ${NPROCESSES}"
 elif command -v mpirun >/dev/null 2>&1; then
     info "using mpirun for mpi launch"
     LAUNCHER="mpirun"
-    LAUNCH_ARGS="-np ${NPROCESSES_PER_NODE}"
+    NON_SLURM_LAUNCH_ARGS=" -np ${NPROCESSES}"
 else
     error "no mpi launcher found (ibrun/aprun/srun/mpirun)"
 fi
@@ -414,8 +414,8 @@ source "${HOME}/.bashrc"
 export OMP_NUM_THREADS=${THREADS_PER_PROCESS}
 export IBRUN_QUIET=1
 
-echo "$LAUNCHER $LAUNCH_ARGS $EXEC_PATH $PARAM_FILE $RESTART"
-$LAUNCHER $LAUNCH_ARGS "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>gizmo.out 2>gizmo.err #1>${JOB_NAME}.out 2>${JOB_NAME}.err
+echo "${LAUNCHER} $EXEC_PATH $PARAM_FILE $RESTART"
+${LAUNCHER} "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>gizmo.out 2>gizmo.err
 
 echo "Job ended."
 sacct -j \$SLURM_JOBID --format=JobID,JobName,Partition,MaxRSS,Elapsed,ExitCode
@@ -435,8 +435,8 @@ EOF
 else
     # actually run locally
     info "running GIZMO..."
-    echo "$LAUNCHER $LAUNCH_ARGS $EXEC_PATH $PARAM_FILE $RESTART"
-    $LAUNCHER $LAUNCH_ARGS "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>gizmo.out 2>gizmo.err #1>${JOB_NAME}.out 2>${JOB_NAME}.err
+    echo "${LAUNCHER}${NON_SLURM_LAUNCH_ARGS} $EXEC_PATH $PARAM_FILE $RESTART"
+    ${LAUNCHER}${NON_SLURM_LAUNCH_ARGS} "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>gizmo.out 2>gizmo.err #1>${JOB_NAME}.out 2>${JOB_NAME}.err
 fi
 
 info "done"
