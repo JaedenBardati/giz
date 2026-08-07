@@ -61,6 +61,7 @@ RUN_DIR=${PWD}              # set with -d flag
 CONFIG_FILE="Config.sh"     # set with --config-name flag
 PARAM_FILE="params.txt"     # set with --param-name flag
 EXEC_FILE="GIZMO"           # set with --exec-name flag
+CODE_DIRNAME="code"
 
 SKIP_MAKE=false             # set to true with -s flag
 RESTART=0                   # set to 1 with -r flag
@@ -80,9 +81,11 @@ GIZMO_SYSTYPE=${GIZMO_SYSTYPE:-""}                            # set according to
 GIZMO_SOURCE=${GIZMO_SOURCE:-""}                              # set if you have a preinstalled GIZMO version you would like to use over public or private repos
 MODULE_LIST=${GIZMO_MODULE_LIST:-"intel impi gsl hdf5 fftw3"} # adjust these modules according to your system (this is irrelevant for systems with no modules)
 EDITOR=${GIZMO_EDITOR:-"vim"}                                 # use your favorite editor (e.g. "emacs", "nano", "open", etc.)
-CODE_DIR=${GIZMO_CODE_DIR:-"code"}
 TEMPLATE_CONFIG_FILE=${GIZMO_TEMPLATE_CONFIG_FILE:-"Template_Config.sh"}
 TEMPLATE_PARAMS_FILE=${GIZMO_TEMPLATE_PARAMS_FILE:-"Template_params.txt"}
+
+# strictly local variables
+TAR_INSTEAD=0 
 
 # ----------------------------
 # Parse arguments
@@ -133,7 +136,6 @@ Predefined variables (set the following variables before running or export in .b
   GIZMO_MODULE_LIST            If your system supports module loading, set this to the list of modules to load (default: "intel impi gsl hdf5 fftw3")
   GIZMO_SOURCE                 Optionally set this to a preexisting GIZMO source code directory to copy from (e.g. if you are using a custom GIZMO install)
   GIZMO_EDITOR                 Optionally set this to your preferred file editor for config and parameter files (default: "vim", e.g. "emacs", "nano", "open")
-  GIZMO_CODE_DIR               Optionally set the name of the local copy of source code subdirectory (default: code)
   GIZMO_TEMPLATE_CONFIG_FILE   Optionally set the name of the template config file to copy from if available (default: Template_Config.sh)
   GIZMO_TEMPLATE_PARAMS_FILE   Optionally set the name of the template parameter file to copy from if available (default: Template_params.txt)
   GIZMO_DEFAULT_ACCOUNT_NAME   Optionally set the default account (allocation) to be charged for slurm queue
@@ -144,9 +146,10 @@ EOF
     exit 0
 }
 
-info()  { echo -e "[\033[1;34mINFO\033[0m] $*"; }
-warn()  { echo -e "[\033[1;33mWARN\033[0m] $*"; }
-error() { echo -e "[\033[1;31mERROR\033[0m] $*" >&2; exit 1; }
+info()   { echo -e "\033[1;34m[INFO]\033[0m $*"; }
+warn()   { echo -e "\033[1;33m[WARN]\033[0m $*"; }
+error()  { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; exit 1; }
+prompt() { printf -v p "\033[1;36m[PROMPT]\033[0m ${1}: "; read -p "$p" "$2"; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -166,6 +169,8 @@ while [[ $# -gt 0 ]]; do
         -p|--partition-name) PARTITION_NAME="$2"; shift 2 ;;
         -A|--allocation-name) ALLOCATION_NAME="$2"; shift 2 ;;
         -h|--help) print_help ;;
+        pack|tar|zip) TAR_INSTEAD=1; shift 1 ;;
+        unpack|untar|unzip) TAR_INSTEAD=2; shift 1 ;;
         *) error "Unknown option: $1" ;;
     esac
 done
@@ -177,15 +182,37 @@ if [[ "$NNODES" != "0" ]]; then
     NPROCESSES_PER_NODE=$((NPROCESSES / NNODES))
 fi
 
-# ----------------------------
-# Step 0: Prepare everything (likely repeat before running gizmo in slurm)
-# ----------------------------
-
 # move to run directory
 ORIGINAL_DIR=${PWD}
 mkdir -p $RUN_DIR
 cd "$RUN_DIR" || error "failed to enter run directory: $RUN_DIR"
 info "using ${RUN_DIR} as run directory"
+
+# ----------------------------
+# Step -1: Do other things instead if asked
+# ----------------------------
+
+if [[ "$TAR_INSTEAD" == "1" ]]; then
+    # override with a pack operation.
+    info "Instead of running GIZMO, I will pack up the directory for quick file transfer."
+    [ -d "$CODE_DIRNAME" ] && ( tar -czf "${CODE_DIRNAME}.tgz" --exclude='*.o' --exclude="${EXEC_FILE}" "$CODE_DIRNAME" && rm -rf "$CODE_DIRNAME" && info "Packed ${CODE_DIRNAME} directory." || error "something went wrong :(" )
+    [ -d "spcool_tables" ] && ( tar -czf "spcool_tables.tgz" "spcool_tables" && rm -rf "spcool_tables" && info "Packed cooling tables." || error "something went wrong :(" )
+    info "All done the pack process, exiting now."
+    exit 0; 
+elif [[ "$TAR_INSTEAD" == "2" ]]; then
+    # override with an unpack operation.
+    info "Instead of running GIZMO, I will unpack the directory."
+    [ -f "${CODE_DIRNAME}.tar.gz" ] && ( tar -xzf "${CODE_DIRNAME}.tar.gz" && rm -rf "${CODE_DIRNAME}.tar.gz" && info "Unpacked ${CODE_DIRNAME}.tar.gz" || error "something went wrong :(" );
+    [ -f "${CODE_DIRNAME}.tgz" ] && ( tar -xzf "${CODE_DIRNAME}.tgz" && rm -rf "${CODE_DIRNAME}.tgz" && info "Unpacked ${CODE_DIRNAME}.tgz" || error "something went wrong :(" );
+    [ -f "spcool_tables.tar.gz" ] && ( tar -xzf "spcool_tables.tar.gz" && rm -rf "spcool_tables.tar.gz" && info "Unpacked spcool_tables.tar.gz" || error "something went wrong :(" );
+    [ -f "spcool_tables.tgz" ] && ( tar -xzf "spcool_tables.tgz" && rm -rf "spcool_tables.tgz" && info "Unpacked spcool_tables.tgz" || error "something went wrong :(" );
+    info "All done unpack process, exiting now."
+    exit 0;
+fi
+
+# ----------------------------
+# Step 0: Prepare everything (likely repeat before running gizmo in slurm)
+# ----------------------------
 
 # set job name if not set using directory name
 if [[ "$JOB_NAME_SET" == "false" && "$NNODES" -gt 0 ]]; then
@@ -217,63 +244,83 @@ export OMP_NUM_THREADS=${THREADS_PER_PROCESS}
 # Step 1: Prepare source code
 # ----------------------------
 
-if [[ -d "$CODE_DIR" ]]; then
-    info "using existing ${CODE_DIR} directory."
-elif [[ -f "${CODE_DIR}.tar" || -f  "${CODE_DIR}.tgz" || -f  "${CODE_DIR}.tar.gz" ]]; then
-    if [[ -f "${CODE_DIR}.tar" && ! -f  "${CODE_DIR}.tgz" && ! -f  "${CODE_DIR}.tar.gz" ]]; then
-        info "extracting ${CODE_DIR}.tar ..."
-        tar -xf ${CODE_DIR}.tar
-    elif [[ ! -f "${CODE_DIR}.tar" && -f  "${CODE_DIR}.tgz" && ! -f  "${CODE_DIR}.tar.gz" ]]; then
-        info "extracting ${CODE_DIR}.tgz ..."
-        tar -xzf ${CODE_DIR}.tgz
-    elif [[ ! -f "${CODE_DIR}.tar" && ! -f  "${CODE_DIR}.tgz" && -f  "${CODE_DIR}.tar.gz" ]]; then
-        info "extracting ${CODE_DIR}.tar.gz ..."
-        tar -xzf ${CODE_DIR}.tar.gz
+if [[ -d "$CODE_DIRNAME" ]]; then
+    info "using existing ${CODE_DIRNAME} directory."
+elif [[ -f "${CODE_DIRNAME}.tar" || -f  "${CODE_DIRNAME}.tgz" || -f  "${CODE_DIRNAME}.tar.gz" ]]; then
+    if [[ -f "${CODE_DIRNAME}.tar" && ! -f  "${CODE_DIRNAME}.tgz" && ! -f  "${CODE_DIRNAME}.tar.gz" ]]; then
+        info "extracting ${CODE_DIRNAME}.tar ..."
+        tar -xf ${CODE_DIRNAME}.tar
+    elif [[ ! -f "${CODE_DIRNAME}.tar" && -f  "${CODE_DIRNAME}.tgz" && ! -f  "${CODE_DIRNAME}.tar.gz" ]]; then
+        info "extracting ${CODE_DIRNAME}.tgz ..."
+        tar -xzf ${CODE_DIRNAME}.tgz
+    elif [[ ! -f "${CODE_DIRNAME}.tar" && ! -f  "${CODE_DIRNAME}.tgz" && -f  "${CODE_DIRNAME}.tar.gz" ]]; then
+        info "extracting ${CODE_DIRNAME}.tar.gz ..."
+        tar -xzf ${CODE_DIRNAME}.tar.gz
     else
-        error "there are multiple tarred code directories with name \"${CODE_DIR}\" and it is not clear which extension to use, please rename or move the ones you don't want"
+        error "there are multiple tarred code directories with name \"${CODE_DIRNAME}\" and it is not clear which extension to use, please rename or move the ones you don't want"
     fi
 elif [[ -n "$GIZMO_SOURCE" && -d "$GIZMO_SOURCE" ]]; then
     info "copying from \$GIZMO_SOURCE=$GIZMO_SOURCE"
-    cp -r "$GIZMO_SOURCE" "$CODE_DIR"
+    cp -r "$GIZMO_SOURCE" "$CODE_DIRNAME"
 else
     if [[ "$SKIP_MAKE" == true ]]; then
         error "there is no source code directory and compilation is turned off so there is no executable to run!"
     fi 
     info "no local GIZMO source found, opting to clone repo instead..."
     # clone repo
-    read -p "do you want to clone the private GIZMO repository instead of the public one? [y/n]: " REPLY # note: private version is now public
-    REPLY=${REPLY,,}  #lowercase
-    if [[ "$REPLY" == "y" || "$REPLY" == "yes" ]]; then
+    OLD_PUBLIC_REPO="0" # note: private version is now public
+    if [[ "$OLD_PUBLIC_REPO" == "1" ]]; then
         info "cloning private GIZMO repository (github)..."
-        if git clone https://github.com/pfhopkins/gizmo.git "$CODE_DIR"; then
-            info "sucessfully cloned GIZMO from github."
+        if git clone https://github.com/pfhopkins/gizmo-public.git "$CODE_DIRNAME"; then
+            info "sucessfully cloned GIZMO-public from github."
         else
             warn "github clone failed, falling back to old bitbucket version ..."
-            if git clone https://bitbucket.org/phopkins/gizmo.git "$CODE_DIR"; then
-                info "successfully cloned GIZMO from bitbucket."
-            else
-                error "failed to clone GIZMO from both github and bitbucket."
-            fi
-        fi
-    else
-        info "cloning public GIZMO repository (github)..."
-        if git clone https://github.com/pfhopkins/gizmo-public.git "$CODE_DIR"; then
-            info "successfully cloned GIZMO-public from github."
-        else
-            warn "github clone failed, falling back to old bitbucket version ..."
-            if git clone https://bitbucket.org/phopkins/gizmo-public.git "$CODE_DIR"; then
+            if git clone https://bitbucket.org/phopkins/gizmo-public.git "$CODE_DIRNAME"; then
                 info "successfully cloned GIZMO-public from bitbucket."
             else
                 error "failed to clone GIZMO-public from both github and bitbucket."
             fi
         fi
+    else
+        prompt "do you want to clone Jaeden's GIZMO fork (instead of the standard repo) [y/n]" REPLY;
+        REPLY=${REPLY,,}  #lowercase
+        if [[ "$REPLY" == "y" || "$REPLY" == "yes" ]]; then
+            info "cloning Jaeden's GIZMO repository fork (github)..."
+            if git clone https://github.com/JaedenBardati/gizmo.git "$CODE_DIRNAME"; then
+                info "successfully cloned GIZMO from github."
+            else
+                error "failed to clone Jaeden's GIZMO fork from github."
+            fi
+        else
+            info "cloning public GIZMO repository (github)..."
+            if git clone https://github.com/pfhopkins/gizmo.git "$CODE_DIRNAME"; then
+                info "successfully cloned GIZMO from github."
+            else
+                warn "github clone failed, falling back to old bitbucket version ..."
+                if git clone https://bitbucket.org/phopkins/gizmo.git "$CODE_DIRNAME"; then
+                    info "successfully cloned GIZMO from bitbucket."
+                else
+                    error "failed to clone GIZMO from both github and bitbucket."
+                fi
+            fi
+        fi
+        (cd "$CODE_DIRNAME" && git update-index --skip-worktree "Makefile.systype")
+        (cd "$CODE_DIRNAME" && git branch -a)
+        while true; do
+            prompt "what branch would you like to use? [blank for default]" BRANCH;
+            if [ -z "$(printf '%s' "$BRANCH" | tr -d '[:space:]')" ]; then
+                break
+            else
+                (cd "$CODE_DIRNAME" && git checkout "$BRANCH") && break || warn "failed to checkout that branch, please select a valid branch among the available ones above.."
+            fi
+        done
     fi
     # set system type
     if [[ "$GIZMO_SYSTYPE" == "" ]]; then
         error "GIZMO_SYSTYPE is not set. Please run \"export GIZMO_SYSTYPE=YourSystemType\" with your system type prior to running or in your .bashrc or .bash_profile file."
     fi
-    echo -e "\nSYSTYPE=\"${GIZMO_SYSTYPE}\"" >> "${CODE_DIR}/Makefile.systype"
-    info "set system type to ${GIZMO_SYSTYPE} in ${CODE_DIR}/Makefile.systype"
+    echo -e "\nSYSTYPE=\"${GIZMO_SYSTYPE}\"" >> "${CODE_DIRNAME}/Makefile.systype"
+    info "set system type to ${GIZMO_SYSTYPE} in ${CODE_DIRNAME}/Makefile.systype"
 fi
 
 
@@ -281,25 +328,25 @@ fi
 # Step 2: Prepare config file (if not skipped)
 # ----------------------------
 if [[ "$SKIP_MAKE" == false ]]; then
-    if [[ ! -f "${CODE_DIR}/$CONFIG_FILE" ]]; then
-        if [[ -f "${CODE_DIR}/${TEMPLATE_CONFIG_FILE}" ]]; then
-            info "making new config file ${CONFIG_FILE} based on ${CODE_DIR}/${TEMPLATE_CONFIG_FILE} ..."
-            cp "${CODE_DIR}/${TEMPLATE_CONFIG_FILE}" "${RUN_DIR}/Config.sh"
+    if [[ ! -f "${CODE_DIRNAME}/$CONFIG_FILE" ]]; then
+        if [[ -f "${CODE_DIRNAME}/${TEMPLATE_CONFIG_FILE}" ]]; then
+            info "making new config file ${CONFIG_FILE} based on ${CODE_DIRNAME}/${TEMPLATE_CONFIG_FILE} ..."
+            cp "${CODE_DIRNAME}/${TEMPLATE_CONFIG_FILE}" "${CODE_DIRNAME}/Config.sh"
         else
-            warn "no ${TEMPLATE_CONFIG_FILE} template found in code directory \"${CODE_DIR}\", making blank $CONFIG_FILE ..."
-            touch "${CODE_DIR}/$CONFIG_FILE"
+            warn "no ${TEMPLATE_CONFIG_FILE} template found in code directory \"${CODE_DIRNAME}\", making blank $CONFIG_FILE ..."
+            touch "${CODE_DIRNAME}/$CONFIG_FILE"
         fi
     else
-        info "opening existing config file ${CODE_DIR}/${CONFIG_FILE} ..."
+        info "opening existing config file ${CODE_DIRNAME}/${CONFIG_FILE} ..."
     fi
 
-    $EDITOR "${CODE_DIR}/$CONFIG_FILE"
+    $EDITOR "${CODE_DIRNAME}/$CONFIG_FILE"
 fi
 
 # move TREECOOL over and get spcool tables (should really depend on config)
 if [[ ! -f "${RUN_DIR}/TREECOOL" ]]; then
     info "getting TREECOOL..."
-    grep -v '^##' "${CODE_DIR}/cooling/TREECOOL" > "${RUN_DIR}/TREECOOL"
+    grep -v '^##' "${CODE_DIRNAME}/cooling/TREECOOL" > "${RUN_DIR}/TREECOOL"
 fi
 if [[ ! -d "${RUN_DIR}/spcool_tables" ]]; then
     info "getting spcool tables..."
@@ -315,7 +362,7 @@ mkdir -p "${RUN_DIR}/${OUTPUT_DIR_NAME}"
 # Step 3: Compile (if not skipped)
 # ----------------------------
 if [[ "$SKIP_MAKE" == false ]]; then
-    cd "$CODE_DIR"
+    cd "$CODE_DIRNAME"
     
     # try to auto-detect gsl location
     if [[ -z "${GSL_HOME}" ]]; then
@@ -346,9 +393,9 @@ fi
 # Step 4: Prepare parameter file
 # ----------------------------
 if [[ ! -f "$PARAM_FILE" ]]; then
-    if [[ -f "$CODE_DIR/params_example.txt" ]]; then
+    if [[ -f "$CODE_DIRNAME/params_example.txt" ]]; then
         info "making new parameter file $PARAM_FILE from ${TEMPLATE_PARAMS_FILE}"
-        cp "$CODE_DIR/${TEMPLATE_PARAMS_FILE}" "$PARAM_FILE"
+        cp "$CODE_DIRNAME/${TEMPLATE_PARAMS_FILE}" "$PARAM_FILE"
     else
         warn "No ${TEMPLATE_PARAMS_FILE} template found; making blank $PARAM_FILE"
         touch "$PARAM_FILE"
@@ -363,7 +410,7 @@ $EDITOR "$PARAM_FILE"
 # ----------------------------
 # Step 5: Run GIZMO
 # ----------------------------
-EXEC_PATH="$RUN_DIR/$CODE_DIR/$EXEC_FILE"
+EXEC_PATH="$RUN_DIR/$CODE_DIRNAME/$EXEC_FILE"
 if [[ ! -x "$EXEC_PATH" ]]; then
     error "GIZMO executable not found: $EXEC_PATH"
 fi
@@ -422,7 +469,7 @@ sacct -j \$SLURM_JOBID --format=JobID,JobName,Partition,MaxRSS,Elapsed,ExitCode
 exit
 EOF
     cd ${ORIGINAL_DIR}
-    read -p "do you want to submit the slurm script now? [y/n]: " REPLY
+    prompt "do you want to submit the slurm script now? [y/n]" REPLY;
     REPLY=${REPLY,,}  #lowercase
     if [[ "$REPLY" == "y" || "$REPLY" == "yes" ]]; then
         info "submitting slurm batch script..."
