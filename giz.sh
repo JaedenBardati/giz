@@ -416,9 +416,11 @@ if [[ ! -x "$EXEC_PATH" ]]; then
 fi
 
 # find the right mpi launcher
+SLURM_PRERUN_EXEC=""
 if command -v ibrun >/dev/null 2>&1; then
     info "using ibrun for mpi launch"
     LAUNCHER="ibrun"
+    SLURM_PRERUN_EXEC='export IBRUN_QUIET=1'$'\n'
     NON_SLURM_LAUNCH_ARGS=" -n ${NPROCESSES}"
 elif command -v aprun >/dev/null 2>&1; then
     info "using aprun for mpi launch"
@@ -452,15 +454,14 @@ if [[ "$NNODES" -gt 0 ]]; then
 #SBATCH --ntasks-per-node=${NPROCESSES_PER_NODE}
 #SBATCH --time=${JOB_TIME}
 
+source "${HOME}/.bashrc"
+cd "${RUN_DIR}"
+
 module purge
 module load ${MODULE_LIST}
 
-cd "${RUN_DIR}"
-source "${HOME}/.bashrc"
-
 export OMP_NUM_THREADS=${THREADS_PER_PROCESS}
-export IBRUN_QUIET=1
-
+${SLURM_PRERUN_EXEC}
 echo "${LAUNCHER} $EXEC_PATH $PARAM_FILE $RESTART"
 ${LAUNCHER} "$EXEC_PATH" "$PARAM_FILE" "$RESTART" 1>gizmo.out 2>gizmo.err
 
