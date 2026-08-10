@@ -86,6 +86,7 @@ TEMPLATE_PARAMS_FILE=${GIZMO_TEMPLATE_PARAMS_FILE:-"Template_params.txt"}
 
 # strictly local variables
 TAR_INSTEAD=0 
+CLEAN_INSTEAD=0
 
 # ----------------------------
 # Parse arguments
@@ -169,8 +170,9 @@ while [[ $# -gt 0 ]]; do
         -p|--partition-name) PARTITION_NAME="$2"; shift 2 ;;
         -A|--allocation-name) ALLOCATION_NAME="$2"; shift 2 ;;
         -h|--help) print_help ;;
-        pack|tar|zip) TAR_INSTEAD=1; shift 1 ;;
-        unpack|untar|unzip) TAR_INSTEAD=2; shift 1 ;;
+        pack|tar|zip) TAR_INSTEAD=1; shift 1; break ;;
+        unpack|untar|unzip) TAR_INSTEAD=2; shift 1; break ;;
+        clean) [ "$2" == "all" ] && CLEAN_INSTEAD=2 || CLEAN_INSTEAD=1 ; break ;;  # giz clean: cleans run (all slurms, used params, etc. before next run); giz clean all (removes all compile and output/analysis data to return it to the ICs (will prompt first)   
         *) error "Unknown option: $1" ;;
     esac
 done
@@ -208,6 +210,15 @@ elif [[ "$TAR_INSTEAD" == "2" ]]; then
     [ -f "spcool_tables.tgz" ] && ( tar -xzf "spcool_tables.tgz" && rm -rf "spcool_tables.tgz" && info "Unpacked spcool_tables.tgz" || error "something went wrong :(" );
     info "All done unpack process, exiting now."
     exit 0;
+fi
+
+if [[ "$CLEAN_INSTEAD" == "1" ]]; then
+    # override with basic clean operation
+    info "Instead of running GIZMO, I will clean up the temporary files from last run." # TODO: eventually put this in a directory by itself and track the run state over time (via restarts and such) 
+    rm -rv slurm-*.out gizmo.out gizmo.err params.txt-usedvalues;
+    info "All done clean process, exiting now."
+    exit 0;
+# TODO clean all (== 2)
 fi
 
 # ----------------------------
