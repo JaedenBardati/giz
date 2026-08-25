@@ -375,7 +375,7 @@ if [[ "$SETUP_INSTEAD" == "1" ]]; then
         if [[ $FFTW_VERSION != 3 ]]; then
             error "FFTW version '${FFTW_VERSION}' not supported."
         fi
-        GIZMO_MODULE_LOAD_COMMAND_LIST="module reset > /dev/null; module swap PrgEnv-cray PrgEnv-gnu > /dev/null; module load cray-hdf5 cray-fftw gsl > /dev/null;"
+        GIZMO_MODULE_LOAD_COMMAND_LIST="module --quiet reset; module --quiet swap PrgEnv-cray PrgEnv-gnu; module --quiet load cray-hdf5 cray-fftw gsl;"
         extra_bashrc_lines+=("export GIZMO_DEFAULT_PARTITION_NAME=\"batch\"")
         info 'tips for GIZMO on Frontier-CPU: most nodes are 64 cores, so use n/N (processes per node) = 64/T (64 divided by number of threads per process) = whole number.'
     
