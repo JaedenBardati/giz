@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ==============================================================================================================================================================================
 # GIZ: One GIZMO Command To Rule Them All.
 # Author: Jaeden Bardati 2025
@@ -195,7 +195,6 @@ NPROCESSES_PER_NODE=1
 JOB_TIME="2-00:00:00"       # set with -t flag (D-HH:MM:SS, irrelevant if NNODES!=0)
 JOB_NAME="gizmo"            # set with -j flag (irrelevant if NNODES!=0)
 JOB_NAME_SET=false          # flags if -j was set (if false, overrides with directory name)
-PARTITION_NAME="normal"     # set with -p flag
 
 TEMPLATE_CONFIG_FILE="" #"Template_Config.sh"
 TEMPLATE_PARAMS_FILE=""
@@ -206,10 +205,11 @@ TEMPLATE_PARAMS_FILE=""
 touch "${BASHRC_FILE}" # make sure bashrc exists
 source "${BASHRC_FILE}" # load in e.g. jaba or giz variables if available
 
-GIZMO_SYSTYPE=${GIZMO_SYSTYPE:-""}                                   # set according to your system type e.g. Frontera or MacBookPro (see Makefile.systype in GIZMO docs)
-GIZMO_MODULE_LOAD_COMMAND_LIST=${GIZMO_MODULE_LOAD_COMMAND_LIST:-""} # adjust these modules according to your system (this is irrelevant for systems with no modules)
-GIZMO_SOURCE=${GIZMO_SOURCE:-""}                                     # set if you have a preinstalled GIZMO version you would like to use over public or private repos
-GIZMO_DEFAULT_ACCOUNT_NAME=${GIZMO_DEFAULT_ACCOUNT_NAME:-""}         # override with -A flag, or set default with GIZMO_DEFAULT_ACCOUNT_NAME if exists (if not, it tries to submit without specifying allocation)
+GIZMO_SYSTYPE=${GIZMO_SYSTYPE:-""}                                         # set according to your system type e.g. Frontera or MacBookPro (see Makefile.systype in GIZMO docs)
+GIZMO_MODULE_LOAD_COMMAND_LIST=${GIZMO_MODULE_LOAD_COMMAND_LIST:-""}       # adjust these modules according to your system (this is irrelevant for systems with no modules)
+GIZMO_SOURCE=${GIZMO_SOURCE:-""}                                           # set if you have a preinstalled GIZMO version you would like to use over public or private repos
+GIZMO_DEFAULT_ACCOUNT_NAME=${GIZMO_DEFAULT_ACCOUNT_NAME:-""}               # override with -A flag, or set default with GIZMO_DEFAULT_ACCOUNT_NAME if exists (if not, it tries to submit without specifying allocation)
+GIZMO_DEFAULT_PARTITION_NAME=${GIZMO_DEFAULT_PARTITION_NAME:-"normal"}     # override with -p flag, or set default with GIZMO_DEFAULT_PARTITION_NAME if exists (if not, it tries to submit without specifying partition)
 
 # strictly local variables
 SETUP_INSTEAD=0
@@ -283,9 +283,10 @@ while [[ $# -gt 0 ]]; do
         -n|-np|--num-processes|--ntasks) NPROCESSES="$2"; shift 2 ;;
         -t|--time) JOB_TIME="$2"; shift 2 ;;
         -j|--job-name) JOB_NAME="$2"; JOB_NAME_SET=true; shift 2 ;;
-        -p|--partition-name) PARTITION_NAME="$2"; shift 2 ;;
+        -p|--partition-name) GIZMO_DEFAULT_PARTITION_NAME="$2"; shift 2 ;;
         -A|--allocation-name) GIZMO_DEFAULT_ACCOUNT_NAME="$2"; shift 2 ;;
         -h|--help) print_help ;;
+        test) TEST_INSTEAD=1; shift 1; break ;; 
         setup|install|reinstall) SETUP_INSTEAD=1; shift 1; break ;;  # setup giz
         pack|tar|zip) TAR_INSTEAD=1; shift 1; break ;;  # pack up for quick file transfer
         unpack|untar|unzip) TAR_INSTEAD=2; shift 1; break ;; # unpack from quick file transfer
@@ -298,15 +299,15 @@ done
 # Ensure parameter validity
 # ----------------------------
 
-# move to run directory
-ORIGINAL_DIR=${PWD}
-mkdir -p $RUN_DIR
-cd "$RUN_DIR" || error "failed to enter run directory: $RUN_DIR"
-info "using ${RUN_DIR} as run directory"
-
 # ask to setup if needed
-if [[ -z "${GIZ_LOCATION:-}" ]]; then
-    error "It looks like you haven't setup giz yet. Please run 'giz.sh setup' first."
+if [[ -z "${GIZ_LOCATION:-}" ]] && [[ "${SETUP_INSTEAD}" == "0" ]]; then
+    warn "It looks like you haven't setup giz yet."
+    prompt_yn "Do you want to setup giz now?"
+    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+        SETUP_INSTEAD=1
+    else
+        warn "You should likely run 'giz.sh setup' first, but I'll continue for now."
+    fi
 fi
 
 # need integer number of processes per node
@@ -321,15 +322,19 @@ fi
 # Step -1: Do other things instead if asked
 # ----------------------------
 
+if [[ "$TEST_INSTEAD" == "1" ]]; then
+    # override with a test operation.
+    info "Giz is working fine."
+    exit 0
+fi
+
 if [[ "$SETUP_INSTEAD" == "1" ]]; then
     # override with a setup operation.
-    # TODO add macbook support
-
     GIZ_LOCATION="$(cd "$(dirname "$0")" && pwd)" # start in the giz directory 
     info ".... GIZ INSTALLATION ...."
 
     # Set GIZMO system type if jaba available otherwise prompt for it
-    if [[ -z "${JABA_INFERRED_SYSTEM:-}" ]]; then
+    if [[ -n "${JABA_INFERRED_SYSTEM:-}" ]]; then
         if [[ $JABA_INFERRED_SYSTEM == "Frontera" ]]; then
             GIZMO_SYSTYPE="Frontera"
         elif [[ $JABA_INFERRED_SYSTEM == "Frontier" ]]; then
@@ -344,17 +349,16 @@ if [[ "$SETUP_INSTEAD" == "1" ]]; then
     if [[ -z "${GIZMO_SYSTYPE:-}" ]]; then
         prompt "Please enter your GIZMO system type (e.g. Frontera, MacBookPro, Frontier-CPU, etc.)" GIZMO_SYSTYPE
     fi
-
     FFTW_VERSION=3 # set FFTW version (2 or 3, defaults to 3)
 
     info "Using GIZMO system type: ${GIZMO_SYSTYPE}"
     info "Using FFTW version ${FFTW_VERSION}"
     info "Using bashrc file at ${BASHRC_FILE}"
     info "Using giz repo location at ${GIZ_LOCATION}"
+    
     extra_bashrc_lines=()
-
-    #### FRONTERA ####
     if [[ "$GIZMO_SYSTYPE" == "Frontera" ]]; then
+        #### FRONTERA ####
         if [[ $FFTW_VERSION == 3 ]]; then
             fftw_module="fftw3/3.3.10"
         elif [[ $FFTW_VERSION == 2 ]]; then
@@ -363,21 +367,23 @@ if [[ "$SETUP_INSTEAD" == "1" ]]; then
             error "FFTW version '${FFTW_VERSION}' not supported."
         fi
         GIZMO_MODULE_LOAD_COMMAND_LIST="module purge; module load intel/19.1.1 impi/19.0.9 gsl/2.8 hdf5/1.14.6 ${fftw_module};"
+        extra_bashrc_lines+=("export GIZMO_DEFAULT_PARTITION_NAME=\"normal\"")
         info 'tips for GIZMO on Frontera: most nodes are 56 cores, so use n/N (processes per node) = 56/T (56 divided by number of threads per process) = whole number. for small runs use n/N=28, T=2, medium runs use n/N=14, T=4, and very large runs use n/N=7, T=8'
-
-    #### FRONTIER - CPU ####
+    
     elif [[ "$GIZMO_SYSTYPE" == "Frontier-CPU" ]]; then
+        #### FRONTIER - CPU ####
         if [[ $FFTW_VERSION != 3 ]]; then
             error "FFTW version '${FFTW_VERSION}' not supported."
         fi
         GIZMO_MODULE_LOAD_COMMAND_LIST="module reset; module swap PrgEnv-cray PrgEnv-gnu; module load cray-hdf5 cray-fftw gsl;"
+        extra_bashrc_lines+=("export GIZMO_DEFAULT_PARTITION_NAME=\"batch\"")
         info 'tips for GIZMO on Frontier-CPU: most nodes are 64 cores, so use n/N (processes per node) = 64/T (64 divided by number of threads per process) = whole number.'
-
-    #### MACBOOK PRO ####
+    
     elif [[ "$GIZMO_SYSTYPE" == "MacBookPro" ]]; then
+        #### MACBOOK PRO ####
         error "macbook implementation is not yet complete"
-        
-    #### IMPLEMENT ANY NEW SYSTEM SETUP ABOVE HERE ....
+    
+    #### Implement any other system setups here ....
 
     else
         error "GIZMO system type '${GIZMO_SYSTYPE}' not yet supported. please write your own in giz_setup.sh"
@@ -387,19 +393,19 @@ if [[ "$SETUP_INSTEAD" == "1" ]]; then
     eval "$GIZMO_MODULE_LOAD_COMMAND_LIST" || error "Could not load modules desired";
     extra_bashrc_lines+=("export GIZMO_MODULE_LOAD_COMMAND_LIST=\"${GIZMO_MODULE_LOAD_COMMAND_LIST}\"")
 
-    if [[ -z "${GIZMO_SOURCE:-}" ]]; then
-        prompt_yn "Do you want to use a preinstalled GIZMO source code directory instead of cloning the public or private repo?"
-        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-            prompt "Please enter the path to your preinstalled GIZMO source code directory" GIZMO_SOURCE
-            extra_bashrc_lines+=("export GIZMO_SOURCE=\"${GIZMO_SOURCE}\"")
-        fi
+    prompt_yn "Do you want to set a new centralized GIZMO source code directory for this system? (no need if you use a public branch)"
+    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+        prompt "Please enter the path to your centralized GIZMO source code directory" GIZMO_SOURCE
+        extra_bashrc_lines+=("export GIZMO_SOURCE=\"${GIZMO_SOURCE}\"")
     fi
-    if [[ -z "${GIZMO_DEFAULT_ACCOUNT_NAME:-}" ]]; then
-        prompt_yn "Do you want to set a default account name for slurm runs?"
+    if command -v sacctmgr > /dev/null 2>&1; then
+        info "Here's a summary of your available allocations:"
+        sacctmgr show user $USER withassoc
+        prompt_yn "Do you want to set a new default account name for slurm runs?"
         if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
             prompt "Please enter the default account name for slurm runs" GIZMO_DEFAULT_ACCOUNT_NAME
-            extra_bashrc_lines+=("export GIZMO_DEFAULT_ACCOUNT_NAME=\"${GIZMO_DEFAULT_ACCOUNT_NAME}\"")
         fi
+        extra_bashrc_lines+=("export GIZMO_DEFAULT_ACCOUNT_NAME=\"${GIZMO_DEFAULT_ACCOUNT_NAME}\"")
     fi
 
     # add some more common lines
@@ -418,25 +424,35 @@ if [[ "$SETUP_INSTEAD" == "1" ]]; then
         echo "alias giz=\"${GIZ_LOCATION}/giz.sh\""
         prompt_yn "Add giz developer aliases?"
         if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-            echo "\n# giz developer aliases"
+            echo -e "\n# giz developer aliases"
             echo "alias cd-giz=\"cd ${GIZ_LOCATION}\""
-            echo "alias cd-gizmo=\"cd ${GIZMO_SOURCE}\""
-            echo "alias pwd-giz=\"echo ${REPO_LOCATION}\""
-            echo "alias pwd-gizmo=\"echo ${GIZMO_SOURCE}\""
+            if [[ -n "${GIZMO_SOURCE:-}" ]]; then
+                echo "alias cd-gizmo=\"cd ${GIZMO_SOURCE}\""
+            fi
+            echo "alias pwd-giz=\"echo ${GIZ_LOCATION}\""
+            if [[ -n "${GIZMO_SOURCE:-}" ]]; then
+                echo "alias pwd-gizmo=\"echo ${GIZMO_SOURCE}\""
+            fi
             echo "alias edit-giz=\"vim ~/GIZMO/giz/giz.sh\""
-            echo "alias giz-pull=\"(cd ${REPO_LOCATION}; git pull origin;)\"\n"
-            echo "alias giz-status=\"(cd ${REPO_LOCATION}; git status;)\"\n"
-	        echo "alias giz-diff=\"(cd ${REPO_LOCATION}; git diff;)\"\n"
-	        echo "alias giz-commit=\"(cd ${REPO_LOCATION}; git add .; git commit;)\"\n"
-            echo "alias giz-push=\"(cd ${REPO_LOCATION}; git push origin;)\"\n"
-            echo "alias giz-fetch=\"(cd ${REPO_LOCATION}; git fetch origin;)\"\n"
+            echo "alias giz-pull=\"(cd ${GIZ_LOCATION}; git pull origin)\""
+            echo "alias giz-status=\"(cd ${GIZ_LOCATION}; git status)\""
+	        echo "alias giz-diff=\"(cd ${GIZ_LOCATION}; git diff)\""
+	        echo "alias giz-commit=\"(cd ${GIZ_LOCATION}; git add .; git commit)\""
+            echo "alias giz-push=\"(cd ${GIZ_LOCATION}; git push origin)\""
+            echo "alias giz-fetch=\"(cd ${GIZ_LOCATION}; git fetch origin)\""
         fi
         echo "${GIZ_VARIABLES_ENDSTRING}"
-    } >> "${BASHRC_TEMP_FILE}"
+    } >> "${BASHRC_FILE}.tmp"
     merge_block_back_in_temp_file "$BASHRC_FILE" "$GIZ_VARIABLES_STRING" "$GIZ_VARIABLES_ENDSTRING" || exit 1
 
-    exit 0;
+    exit 0
 fi
+
+# move to run directory
+ORIGINAL_DIR=${PWD}
+mkdir -p $RUN_DIR
+cd "$RUN_DIR" || error "failed to enter run directory: $RUN_DIR"
+info "using ${RUN_DIR} as run directory"
 
 
 if [[ "$TAR_INSTEAD" == "1" ]]; then
@@ -695,7 +711,7 @@ if [[ "$NNODES" -gt 0 ]]; then
         echo "#SBATCH --account=$GIZMO_DEFAULT_ACCOUNT_NAME" >> "$BATCH_FILE"
     fi
     cat >> "$BATCH_FILE" <<EOF
-#SBATCH --partition=${PARTITION_NAME}
+#SBATCH --partition=${GIZMO_DEFAULT_PARTITION_NAME}
 #SBATCH --job-name=${JOB_NAME}
 #SBATCH --nodes=${NNODES}
 #SBATCH --ntasks-per-node=${NPROCESSES_PER_NODE}
