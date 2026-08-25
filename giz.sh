@@ -53,10 +53,132 @@
 
 set -e  # exit immediately on error
 
+info()   { echo -e "\033[1;34m[INFO]\033[0m $*"; }
+warn()   { echo -e "\033[1;33m[WARN]\033[0m $*"; }
+error()  { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; exit 1; }
+prompt() { printf -v p "\033[1;36m[PROMPT]\033[0m ${1}: "; read -p "$p" "$2"; }
+prompt_yn() { prompt "$1 [y/n]" YN; YN=$(echo "$YN" | tr -d ' ' | tr '[:upper:]' '[:lower:]'); }
+
+remove_block_between_markers() {
+    local target_file="$1"
+    local start_marker="$2"
+    local end_marker="$3"
+
+    if [[ ! -f "${target_file}" ]]; then
+        info "No file found at ${target_file}; nothing to reset."
+        return 1
+    fi
+
+    local tmp_file
+    tmp_file="$(mktemp)"
+
+    awk -v start="$start_marker" -v end="$end_marker" '
+        BEGIN { inblock=0; found_start=0; found_end=0 }
+        $0==start { inblock=1; found_start=1; next }
+        $0==end { if (inblock) { inblock=0; found_end=1; next } }
+        !inblock { print }
+        END {
+            if (found_start && !found_end) exit 2
+            if (!found_start) exit 3
+        }
+    ' "$target_file" > "$tmp_file"
+    local awk_status=$?
+
+    if [[ $awk_status -eq 2 ]]; then
+        info "Found start marker '${start_marker}' but not end marker '${end_marker}' in ${target_file}; refusing to modify."
+        rm -f "$tmp_file"
+        return 1
+    elif [[ $awk_status -eq 3 ]]; then
+        #info "Did not find start marker \"${start_marker}\" in \"${target_file}\"; nothing to remove."
+        rm -f "$tmp_file"
+        return 0
+    elif [[ $awk_status -ne 0 ]]; then
+        info "Failed to process ${target_file} for reset (awk status ${awk_status})."
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    if ! mv "$tmp_file" "$target_file"; then
+        info "Failed to copy over temporary file ${tmp_file} to target file ${target_file}."
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    rm -f "$tmp_file"
+    return 0
+}
+
+prepare_temp_file_block () {
+    local target_file="$1"
+    local start_marker="$2"
+    local end_marker="$3"
+
+    local file_name="${target_file##*/}"
+    local temp_file="${target_file}.tmp"
+
+    if [[ -f "${temp_file}" ]]; then
+        info "There is already a temporary ${file_name} file ${temp_file} from a previous setup."
+        prompt_yn "Do you want to delete it and continue with the setup?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            info "Okay, removing temporary file."
+            rm -f "${temp_file}"
+        else
+            prompt_yn "Would you like to restore it?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                mv "${temp_file}" "${target_file}"
+                info "Restored ${target_file} from ${temp_file}."
+            else
+                error "Please check and remove ${temp_file} manually before proceeding with giz installation/reinstallation."
+            fi
+        fi
+    fi
+    if [[ ! -e "$temp_file" ]]; then
+        info "Creating ${temp_file} (it did not exist)."
+        touch "$temp_file" || { error "Failed to create ${temp_file}"; }
+    fi
+    cp "$target_file" "$temp_file" > /dev/null || { error "Failed to create temporary copy of ${file_name} file."; }
+    remove_block_between_markers "$temp_file" "$start_marker" "$end_marker" || exit 1
+}
+
+merge_block_back_in_temp_file () {
+    local target_file="$1"
+    local start_marker="$2"
+    local end_marker="$3"
+
+    local file_name="${target_file##*/}"
+    local temp_file="${target_file}.tmp"
+
+    if ! cmp -s "$target_file" "$temp_file"; then
+        info "Proposed changes to ${target_file}:"
+        diff --color -u "$target_file" "$temp_file"
+        prompt_yn "Should I make the above changes to your ${file_name}?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            mv -v "$temp_file" "$target_file" > /dev/null 
+        else
+            prompt_yn "Okay, I will abort your ${file_name} changes and end the program. Should I keep a backup of the proposed changes for you to look at?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Keeping proposed changes at ${temp_file}."
+            else
+                rm -f "${temp_file}" # remove temp file
+            fi
+            exit 0
+        fi
+    else
+        info "No changes were made to your ${file_name}."
+        rm -f "${temp_file}"
+    fi
+}
+
+
 # ------------------------
 # Default parameters
 # ------------------------
-# override with flags
+# global constants 
+GIZ_VARIABLES_STRING="# >>> Added by GIZ >>>"
+GIZ_VARIABLES_ENDSTRING="# <<< Added by GIZ <<<"
+BASHRC_FILE="${HOME}/.bashrc"
+
+# override with flags or .giz_params file
 RUN_DIR=${PWD}              # set with -d flag
 CONFIG_FILE="Config.sh"     # set with --config-name flag
 PARAM_FILE="params.txt"     # set with --param-name flag
@@ -68,29 +190,36 @@ RESTART=0                   # set to 1 with -r flag
 
 THREADS_PER_PROCESS=1       # set with -T flag (aka number of cpu threads per MPI task/process, depends on CPU architecture)
 NNODES=0                    # set with -N flag (0 = no slurm queue, 1+ = 1+ slurm node(s))
-NPROCESSES=0
-NPROCESSES_PER_NODE=1       # set with -n flag (aka number of MPI tasks/processes, irrelevant if NNODES!=0)
+NPROCESSES=0                # set with -n flag (aka number of MPI tasks/processes, irrelevant if NNODES!=0)
+NPROCESSES_PER_NODE=1
 JOB_TIME="2-00:00:00"       # set with -t flag (D-HH:MM:SS, irrelevant if NNODES!=0)
 JOB_NAME="gizmo"            # set with -j flag (irrelevant if NNODES!=0)
 JOB_NAME_SET=false          # flags if -j was set (if false, overrides with directory name)
 PARTITION_NAME="normal"     # set with -p flag
-ALLOCATION_NAME=${GIZMO_DEFAULT_ACCOUNT_NAME:-""}   # override with -A flag, or set default with GIZMO_DEFAULT_ACCOUNT_NAME if exists (if not, it tries to submit without specifying allocation)
 
-# override with predefined variables if needed (e.g. export variabled in your .bashrc or .bash_profile)
-GIZMO_SYSTYPE=${GIZMO_SYSTYPE:-""}                            # set according to your system type e.g. Frontera or MacBookPro (see Makefile.systype in GIZMO docs)
-GIZMO_SOURCE=${GIZMO_SOURCE:-""}                              # set if you have a preinstalled GIZMO version you would like to use over public or private repos
-MODULE_LIST=${GIZMO_MODULE_LIST:-"intel impi gsl hdf5 fftw3"} # adjust these modules according to your system (this is irrelevant for systems with no modules)
-EDITOR=${GIZMO_EDITOR:-"vim"}                                 # use your favorite editor (e.g. "emacs", "nano", "open", etc.)
-TEMPLATE_CONFIG_FILE=${GIZMO_TEMPLATE_CONFIG_FILE:-"Template_Config.sh"}
-TEMPLATE_PARAMS_FILE=${GIZMO_TEMPLATE_PARAMS_FILE:-"Template_params.txt"}
+TEMPLATE_CONFIG_FILE="" #"Template_Config.sh"
+TEMPLATE_PARAMS_FILE=""
+
+# ----------------------------
+# Override predefined variables with system defaults if available
+# ----------------------------
+touch "${BASHRC_FILE}" # make sure bashrc exists
+source "${BASHRC_FILE}" # load in e.g. jaba or giz variables if available
+
+GIZMO_SYSTYPE=${GIZMO_SYSTYPE:-""}                                   # set according to your system type e.g. Frontera or MacBookPro (see Makefile.systype in GIZMO docs)
+GIZMO_MODULE_LOAD_COMMAND_LIST=${GIZMO_MODULE_LOAD_COMMAND_LIST:-""} # adjust these modules according to your system (this is irrelevant for systems with no modules)
+GIZMO_SOURCE=${GIZMO_SOURCE:-""}                                     # set if you have a preinstalled GIZMO version you would like to use over public or private repos
+GIZMO_DEFAULT_ACCOUNT_NAME=${GIZMO_DEFAULT_ACCOUNT_NAME:-""}         # override with -A flag, or set default with GIZMO_DEFAULT_ACCOUNT_NAME if exists (if not, it tries to submit without specifying allocation)
 
 # strictly local variables
+SETUP_INSTEAD=0
 TAR_INSTEAD=0 
 CLEAN_INSTEAD=0
 
 # ----------------------------
 # Parse arguments
 # ----------------------------
+
 print_help() {
     more <<EOF
 GIZ: One GIZMO Command To Rule Them All.
@@ -132,26 +261,13 @@ Examples:
   giz -N 1 -n 8 -T 7 -t "12:00:00"                           # queue GIZMO run on 1 node, 8 mpi processes, 7 threads per process, for 12 hours
   giz -sr -N 5 -n 20 -T 2                                    # queue restart run with 20 mpi processes across 5 nodes, 2 threads per process, skipping compilation
 
-Predefined variables (set the following variables before running or export in .bashrc or .bash_profile):
-  GIZMO_SYSTYPE                If cloning GIZMO, must set this to your GIZMO system type (e.g. "Frontera" or "MacBookPro", see Makefile.systype, NO DEFAULT!)
-  GIZMO_MODULE_LIST            If your system supports module loading, set this to the list of modules to load (default: "intel impi gsl hdf5 fftw3")
-  GIZMO_SOURCE                 Optionally set this to a preexisting GIZMO source code directory to copy from (e.g. if you are using a custom GIZMO install)
-  GIZMO_EDITOR                 Optionally set this to your preferred file editor for config and parameter files (default: "vim", e.g. "emacs", "nano", "open")
-  GIZMO_TEMPLATE_CONFIG_FILE   Optionally set the name of the template config file to copy from if available (default: Template_Config.sh)
-  GIZMO_TEMPLATE_PARAMS_FILE   Optionally set the name of the template parameter file to copy from if available (default: Template_params.txt)
-  GIZMO_DEFAULT_ACCOUNT_NAME   Optionally set the default account (allocation) to be charged for slurm queue
-
 GIZMO documentation (for Config.sh, params.txt, and SYSTYPE): 
   http://www.tapir.caltech.edu/~phopkins/Site/GIZMO_files/gizmo_documentation.html
 EOF
     exit 0
 }
 
-info()   { echo -e "\033[1;34m[INFO]\033[0m $*"; }
-warn()   { echo -e "\033[1;33m[WARN]\033[0m $*"; }
-error()  { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; exit 1; }
-prompt() { printf -v p "\033[1;36m[PROMPT]\033[0m ${1}: "; read -p "$p" "$2"; }
-
+# override with inputted flags
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -s|--skip-make) SKIP_MAKE=true; shift ;;
@@ -168,21 +284,19 @@ while [[ $# -gt 0 ]]; do
         -t|--time) JOB_TIME="$2"; shift 2 ;;
         -j|--job-name) JOB_NAME="$2"; JOB_NAME_SET=true; shift 2 ;;
         -p|--partition-name) PARTITION_NAME="$2"; shift 2 ;;
-        -A|--allocation-name) ALLOCATION_NAME="$2"; shift 2 ;;
+        -A|--allocation-name) GIZMO_DEFAULT_ACCOUNT_NAME="$2"; shift 2 ;;
         -h|--help) print_help ;;
-        pack|tar|zip) TAR_INSTEAD=1; shift 1; break ;;
-        unpack|untar|unzip) TAR_INSTEAD=2; shift 1; break ;;
+        setup|install|reinstall) SETUP_INSTEAD=1; shift 1; break ;;  # setup giz
+        pack|tar|zip) TAR_INSTEAD=1; shift 1; break ;;  # pack up for quick file transfer
+        unpack|untar|unzip) TAR_INSTEAD=2; shift 1; break ;; # unpack from quick file transfer
         clean) [ "$2" == "all" ] && CLEAN_INSTEAD=2 || CLEAN_INSTEAD=1 ; break ;;  # giz clean: cleans run (all slurms, used params, etc. before next run); giz clean all (removes all compile and output/analysis data to return it to the ICs (will prompt first)   
         *) error "Unknown option: $1" ;;
     esac
 done
 
-if [[ "$NNODES" != "0" ]]; then
-    if (( NPROCESSES % NNODES != 0 )); then
-        error "The number of processes (${NPROCESSES}) is not a multiple of the number of nodes (${NNODES})"
-    fi
-    NPROCESSES_PER_NODE=$((NPROCESSES / NNODES))
-fi
+# ----------------------------
+# Ensure parameter validity
+# ----------------------------
 
 # move to run directory
 ORIGINAL_DIR=${PWD}
@@ -190,9 +304,140 @@ mkdir -p $RUN_DIR
 cd "$RUN_DIR" || error "failed to enter run directory: $RUN_DIR"
 info "using ${RUN_DIR} as run directory"
 
+# ask to setup if needed
+if [[ -z "${GIZ_LOCATION:-}" ]]; then
+    error "It looks like you haven't setup giz yet. Please run 'giz.sh setup' first."
+fi
+
+# need integer number of processes per node
+if [[ "$NNODES" != "0" ]]; then
+    if (( NPROCESSES % NNODES != 0 )); then
+        error "The number of processes (${NPROCESSES}) is not a multiple of the number of nodes (${NNODES})"
+    fi
+    NPROCESSES_PER_NODE=$((NPROCESSES / NNODES))
+fi
+
 # ----------------------------
 # Step -1: Do other things instead if asked
 # ----------------------------
+
+if [[ "$SETUP_INSTEAD" == "1" ]]; then
+    # override with a setup operation.
+    # TODO add macbook support
+
+    GIZ_LOCATION="$(cd "$(dirname "$0")" && pwd)" # start in the giz directory 
+    info ".... GIZ INSTALLATION ...."
+
+    # Set GIZMO system type if jaba available otherwise prompt for it
+    if [[ -z "${JABA_INFERRED_SYSTEM:-}" ]]; then
+        if [[ $JABA_INFERRED_SYSTEM == "Frontera" ]]; then
+            GIZMO_SYSTYPE="Frontera"
+        elif [[ $JABA_INFERRED_SYSTEM == "Frontier" ]]; then
+            GIZMO_SYSTYPE="Frontier-CPU" # prompt here later when kokkos branch works
+        elif [[ $JABA_INFERRED_SYSTEM == "Frontier" ]]; then
+            GIZMO_SYSTYPE="Frontier-CPU"
+        else
+            warn "JABA inferred system type \"${JABA_INFERRED_SYSTEM}\" is not yet supported by GIZ. Setting gizmo type to this same string for now..."
+            GIZMO_SYSTYPE="${JABA_INFERRED_SYSTEM}"
+        fi
+    fi
+    if [[ -z "${GIZMO_SYSTYPE:-}" ]]; then
+        prompt "Please enter your GIZMO system type (e.g. Frontera, MacBookPro, Frontier-CPU, etc.)" GIZMO_SYSTYPE
+    fi
+
+    FFTW_VERSION=3 # set FFTW version (2 or 3, defaults to 3)
+
+    info "Using GIZMO system type: ${GIZMO_SYSTYPE}"
+    info "Using FFTW version ${FFTW_VERSION}"
+    info "Using bashrc file at ${BASHRC_FILE}"
+    info "Using giz repo location at ${GIZ_LOCATION}"
+    extra_bashrc_lines=()
+
+    #### FRONTERA ####
+    if [[ "$GIZMO_SYSTYPE" == "Frontera" ]]; then
+        if [[ $FFTW_VERSION == 3 ]]; then
+            fftw_module="fftw3/3.3.10"
+        elif [[ $FFTW_VERSION == 2 ]]; then
+            fftw_module="fftw2"
+        else
+            error "FFTW version '${FFTW_VERSION}' not supported."
+        fi
+        GIZMO_MODULE_LOAD_COMMAND_LIST="module purge; module load intel/19.1.1 impi/19.0.9 gsl/2.8 hdf5/1.14.6 ${fftw_module};"
+        info 'tips for GIZMO on Frontera: most nodes are 56 cores, so use n/N (processes per node) = 56/T (56 divided by number of threads per process) = whole number. for small runs use n/N=28, T=2, medium runs use n/N=14, T=4, and very large runs use n/N=7, T=8'
+
+    #### FRONTIER - CPU ####
+    elif [[ "$GIZMO_SYSTYPE" == "Frontier-CPU" ]]; then
+        if [[ $FFTW_VERSION != 3 ]]; then
+            error "FFTW version '${FFTW_VERSION}' not supported."
+        fi
+        GIZMO_MODULE_LOAD_COMMAND_LIST="module reset; module swap PrgEnv-cray PrgEnv-gnu; module load cray-hdf5 cray-fftw gsl;"
+        info 'tips for GIZMO on Frontier-CPU: most nodes are 64 cores, so use n/N (processes per node) = 64/T (64 divided by number of threads per process) = whole number.'
+
+    #### MACBOOK PRO ####
+    elif [[ "$GIZMO_SYSTYPE" == "MacBookPro" ]]; then
+        error "macbook implementation is not yet complete"
+        
+    #### IMPLEMENT ANY NEW SYSTEM SETUP ABOVE HERE ....
+
+    else
+        error "GIZMO system type '${GIZMO_SYSTYPE}' not yet supported. please write your own in giz_setup.sh"
+    fi
+
+    # make sure modules actually load
+    eval "$GIZMO_MODULE_LOAD_COMMAND_LIST" || error "Could not load modules desired";
+    extra_bashrc_lines+=("export GIZMO_MODULE_LOAD_COMMAND_LIST=\"${GIZMO_MODULE_LOAD_COMMAND_LIST}\"")
+
+    if [[ -z "${GIZMO_SOURCE:-}" ]]; then
+        prompt_yn "Do you want to use a preinstalled GIZMO source code directory instead of cloning the public or private repo?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            prompt "Please enter the path to your preinstalled GIZMO source code directory" GIZMO_SOURCE
+            extra_bashrc_lines+=("export GIZMO_SOURCE=\"${GIZMO_SOURCE}\"")
+        fi
+    fi
+    if [[ -z "${GIZMO_DEFAULT_ACCOUNT_NAME:-}" ]]; then
+        prompt_yn "Do you want to set a default account name for slurm runs?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            prompt "Please enter the default account name for slurm runs" GIZMO_DEFAULT_ACCOUNT_NAME
+            extra_bashrc_lines+=("export GIZMO_DEFAULT_ACCOUNT_NAME=\"${GIZMO_DEFAULT_ACCOUNT_NAME}\"")
+        fi
+    fi
+
+    # add some more common lines
+    extra_bashrc_lines+=('umask 022')
+    extra_bashrc_lines+=('ulimit -s unlimited')
+
+    # append everything to bashrc
+    prepare_temp_file_block "$BASHRC_FILE" "$GIZ_VARIABLES_STRING" "$GIZ_VARIABLES_ENDSTRING" || exit 1
+    {
+        echo "${GIZ_VARIABLES_STRING}"
+        echo "export GIZ_LOCATION=\"${GIZ_LOCATION}\""
+        echo "export GIZMO_SYSTYPE=\"${GIZMO_SYSTYPE}\""
+        for line in "${extra_bashrc_lines[@]}"; do
+            echo "$line"
+        done
+        echo "alias giz=\"${GIZ_LOCATION}/giz.sh\""
+        prompt_yn "Add giz developer aliases?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            echo "\n# giz developer aliases"
+            echo "alias cd-giz=\"cd ${GIZ_LOCATION}\""
+            echo "alias cd-gizmo=\"cd ${GIZMO_SOURCE}\""
+            echo "alias pwd-giz=\"echo ${REPO_LOCATION}\""
+            echo "alias pwd-gizmo=\"echo ${GIZMO_SOURCE}\""
+            echo "alias edit-giz=\"vim ~/GIZMO/giz/giz.sh\""
+            echo "alias giz-pull=\"(cd ${REPO_LOCATION}; git pull origin;)\"\n"
+            echo "alias giz-status=\"(cd ${REPO_LOCATION}; git status;)\"\n"
+	        echo "alias giz-diff=\"(cd ${REPO_LOCATION}; git diff;)\"\n"
+	        echo "alias giz-commit=\"(cd ${REPO_LOCATION}; git add .; git commit;)\"\n"
+            echo "alias giz-push=\"(cd ${REPO_LOCATION}; git push origin;)\"\n"
+            echo "alias giz-fetch=\"(cd ${REPO_LOCATION}; git fetch origin;)\"\n"
+        fi
+        echo "${GIZ_VARIABLES_ENDSTRING}"
+    } >> "${BASHRC_TEMP_FILE}"
+    merge_block_back_in_temp_file "$BASHRC_FILE" "$GIZ_VARIABLES_STRING" "$GIZ_VARIABLES_ENDSTRING" || exit 1
+
+    exit 0;
+fi
+
 
 if [[ "$TAR_INSTEAD" == "1" ]]; then
     # override with a pack operation.
@@ -222,7 +467,7 @@ if [[ "$CLEAN_INSTEAD" == "1" ]]; then
 fi
 
 # ----------------------------
-# Step 0: Prepare everything (likely repeat before running gizmo in slurm)
+# Step 0: Prepare everything for GIZMO (repeat before running gizmo in slurm)
 # ----------------------------
 
 # set job name if not set using directory name
@@ -231,19 +476,10 @@ if [[ "$JOB_NAME_SET" == "false" && "$NNODES" -gt 0 ]]; then
     info "no job name set, using '${JOB_NAME}'" 
 fi
 
-# source bashrc or bash_profile if they exist
-if [[ -f "${HOME}/.bashrc" ]]; then
-    source "${HOME}/.bashrc"
-fi
-if [[ -f "${HOME}/.bash_profile" ]]; then
-    source "${HOME}/.bash_profile"
-fi
-
 # try to load modules
 if command -v module >/dev/null 2>&1; then
-    info "modules system available, loading in modules \"${MODULE_LIST}\" ..."
-    module purge
-    module load $MODULE_LIST
+    info "modules system available, loading in modules ..."
+    eval "$GIZMO_MODULE_LOAD_COMMAND_LIST" || error "Could not load modules desired";
 else
     info "no modules system found, assuming you have already installed relevant packages."
 fi
@@ -328,7 +564,7 @@ else
     fi
     # set system type
     if [[ "$GIZMO_SYSTYPE" == "" ]]; then
-        error "GIZMO_SYSTYPE is not set. Please run \"export GIZMO_SYSTYPE=YourSystemType\" with your system type prior to running or in your .bashrc or .bash_profile file."
+        error "GIZMO_SYSTYPE is not set. Please run \"export GIZMO_SYSTYPE=YourSystemType\" with your system type prior to running or in your .bashrc file."
     fi
     echo -e "\nSYSTYPE=\"${GIZMO_SYSTYPE}\"" >> "${CODE_DIRNAME}/Makefile.systype"
     info "set system type to ${GIZMO_SYSTYPE} in ${CODE_DIRNAME}/Makefile.systype"
@@ -351,7 +587,7 @@ if [[ "$SKIP_MAKE" == false ]]; then
         info "opening existing config file ${CODE_DIRNAME}/${CONFIG_FILE} ..."
     fi
 
-    $EDITOR "${CODE_DIRNAME}/$CONFIG_FILE"
+    vim "${CODE_DIRNAME}/$CONFIG_FILE"
 fi
 
 # move TREECOOL over and get spcool tables (should really depend on config)
@@ -415,7 +651,7 @@ else
     info "found existing $PARAM_FILE"
 fi
 
-$EDITOR "$PARAM_FILE"
+vim "$PARAM_FILE"
 
 
 # ----------------------------
@@ -455,8 +691,8 @@ if [[ "$NNODES" -gt 0 ]]; then
     info "making slurm batch script ${BATCH_FILE} ..."
 
     echo "#!/bin/bash" > "$BATCH_FILE" 
-    if [ -n "$ALLOCATION_NAME" ]; then
-        echo "#SBATCH --account=$ALLOCATION_NAME" >> "$BATCH_FILE"
+    if [ -n "$GIZMO_DEFAULT_ACCOUNT_NAME" ]; then
+        echo "#SBATCH --account=$GIZMO_DEFAULT_ACCOUNT_NAME" >> "$BATCH_FILE"
     fi
     cat >> "$BATCH_FILE" <<EOF
 #SBATCH --partition=${PARTITION_NAME}
@@ -465,11 +701,10 @@ if [[ "$NNODES" -gt 0 ]]; then
 #SBATCH --ntasks-per-node=${NPROCESSES_PER_NODE}
 #SBATCH --time=${JOB_TIME}
 
-source "${HOME}/.bashrc"
+source "${BASHRC_FILE}"
 cd "${RUN_DIR}"
 
-module purge
-module load ${MODULE_LIST}
+${GIZMO_MODULE_LOAD_COMMAND_LIST}
 
 export OMP_NUM_THREADS=${THREADS_PER_PROCESS}
 ${SLURM_PRERUN_EXEC}
