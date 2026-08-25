@@ -596,7 +596,7 @@ if [[ "$SKIP_MAKE" == false ]]; then
             info "making new config file ${CONFIG_FILE} based on ${CODE_DIRNAME}/${TEMPLATE_CONFIG_FILE} ..."
             cp "${CODE_DIRNAME}/${TEMPLATE_CONFIG_FILE}" "${CODE_DIRNAME}/Config.sh"
         else
-            warn "no ${TEMPLATE_CONFIG_FILE} template found in code directory \"${CODE_DIRNAME}\", making blank $CONFIG_FILE ..."
+            warn "no config template \"${TEMPLATE_CONFIG_FILE}\" found in code directory \"${CODE_DIRNAME}\", making blank $CONFIG_FILE ..."
             touch "${CODE_DIRNAME}/$CONFIG_FILE"
         fi
     else
